@@ -31,7 +31,17 @@ ThreadPool::ThreadPool(size_t num_thread) : stop(false) {
     }
 }
 
-ThreadPool::~ThreadPool() {}
+ThreadPool::~ThreadPool() {
+    {
+        std::lock_guard<std::mutex> lock(this->mtx);
+        this->stop = true;
+    }
+    this->cv.notify_all();
+
+    for (std::thread &worker : this->workers) {
+        worker.join();
+    }
+}
 void ThreadPool::submit(std::function<void()> task) {
     {
         std::lock_guard<std::mutex> lock(this->mtx);
