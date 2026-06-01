@@ -55,3 +55,24 @@ target_link_libraries(
     benchmark
     threadpool
 )
+
+# =========================
+# future test
+# =========================
+add_executable(future_test
+    tests/future_test.cpp
+)
+
+# =========================
+# packaged_task test
+# =========================
+add_executable(packaged_task_test
+    tests/packaged_task_test.cpp
+)
+
+# =========================
+# decltype template invoke_result test
+# =========================
+add_executable(decltype_test
+    tests/decltype_test.cpp
+)

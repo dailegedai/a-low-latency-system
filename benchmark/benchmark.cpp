@@ -5,7 +5,7 @@
 
 int main() {
 
-    ThreadPool pool(4);
+    ThreadPool pool(12);
 
     auto start =
         std::chrono::high_resolution_clock::now();
