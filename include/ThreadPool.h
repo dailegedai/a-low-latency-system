@@ -25,7 +25,7 @@ private:
     bool stop{false};
 };
 
-template<class F, class... Args>
+template<typename F, typename... Args>
 auto ThreadPool::submit(F&& f, Args&&... args)
     -> std::future<typename std::invoke_result<F, Args...>::type>
 {
