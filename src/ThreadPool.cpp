@@ -2,7 +2,7 @@
 #include  <iostream>
 #include <chrono>
 
-ThreadPool::ThreadPool(size_t num_thread) : stop(false) {
+ThreadPool::ThreadPool(size_t num_thread, size_t queue_size) : stop(false), max_queue_size(queue_size) {
     for (size_t i = 0; i < num_thread; i++) {
         workers.emplace_back([this]() {
             std::cout << "worker thread " 
@@ -11,17 +11,19 @@ ThreadPool::ThreadPool(size_t num_thread) : stop(false) {
                 std::function<void()> task;
 
                 {
-                    std::unique_lock<std::mutex> lock(this->mtx);
-                    this->cv.wait(lock, [this]() {
-                        return this->stop || !this->tasks.empty();
+                    std::unique_lock<std::mutex> lock(mtx);
+                    cv.wait(lock, [this]() {
+                        return stop || !tasks.empty();
                     });
 
-                    if (this->stop && this->tasks.empty()) {
+                    if (stop && tasks.empty()) {
                         return;
                     }
 
-                    task = std::move(this->tasks.front());
-                    this->tasks.pop();
+                    task = std::move(tasks.front());
+                    tasks.pop();
+
+                    not_full_cv.notify_one();
                 }
 
                 task();
@@ -32,12 +34,12 @@ ThreadPool::ThreadPool(size_t num_thread) : stop(false) {
 
 ThreadPool::~ThreadPool() {
     {
-        std::lock_guard<std::mutex> lock(this->mtx);
-        this->stop = true;
+        std::lock_guard<std::mutex> lock(mtx);
+        stop = true;
     }
-    this->cv.notify_all();
+    cv.notify_all();
 
-    for (std::thread &worker : this->workers) {
+    for (std::thread &worker : workers) {
         if (worker.joinable()) { 
             worker.join();
         }

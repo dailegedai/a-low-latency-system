@@ -9,7 +9,7 @@
 
 class ThreadPool {
 public:
-    ThreadPool(size_t num_thread);
+    ThreadPool(size_t num_thread, size_t queue_size);
     ~ThreadPool();
 
     template<class F, class... Args>
@@ -19,10 +19,11 @@ public:
 private:
     std::vector<std::thread> workers;
     std::queue<std::function<void()>> tasks;
-
+    std::condition_variable not_full_cv;
     std::mutex mtx;
     std::condition_variable cv;
     bool stop{false};
+    size_t max_queue_size;
 };
 
 template<typename F, typename... Args>
@@ -44,7 +45,14 @@ auto ThreadPool::submit(F&& f, Args&&... args)
     std::future<return_type> res = task->get_future();
 
     {
-        std::lock_guard<std::mutex> lock(mtx);
+        std::unique_lock<std::mutex> lock(mtx);
+
+        not_full_cv.wait(
+            lock,
+            [this] {
+                return tasks.size() < max_queue_size;
+            }
+        );
 
         if (stop) {
             throw std::runtime_error(

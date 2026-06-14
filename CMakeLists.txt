@@ -76,3 +76,13 @@ add_executable(packaged_task_test
 add_executable(decltype_test
     tests/decltype_test.cpp
 )
+
+add_executable(
+    bounded_queue_test
+    tests/bounded_queue_test.cpp
+)
+
+target_link_libraries(
+    bounded_queue_test
+    threadpool
+)
