@@ -2,7 +2,7 @@
 #include  <iostream>
 #include <chrono>
 
-ThreadPool::ThreadPool(size_t num_thread, size_t queue_size) : stop(false), max_queue_size(queue_size) {
+ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy) : stop(false), max_queue_size(queue_size), reject_policy(policy) {
     for (size_t i = 0; i < num_thread; i++) {
         workers.emplace_back([this]() {
             std::cout << "worker thread " 

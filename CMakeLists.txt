@@ -86,3 +86,13 @@ target_link_libraries(
     bounded_queue_test
     threadpool
 )
+
+add_executable(
+    reject_policy_test
+    tests/reject_policy_test.cpp
+)
+
+target_link_libraries(
+    reject_policy_test
+    threadpool
+)
