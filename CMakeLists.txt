@@ -96,3 +96,13 @@ target_link_libraries(
     reject_policy_test
     threadpool
 )
+
+add_executable(
+    false_sharing_test
+    tests/false_sharing_test.cpp
+)
+
+target_link_libraries(
+    false_sharing_test
+    threadpool
+)

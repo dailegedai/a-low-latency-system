@@ -66,18 +66,18 @@ auto ThreadPool::submit(F &&f, Args &&...args)
             break;
         }
 
-            // case RejectPolicy::DISCARD:
-            // {
-            //     if (tasks.size() >= max_queue_size)
-            //     {
-            //         return std::futrue<return_type>{};
-            /*
-            future.get()会出问题。因为：future没有关联shared state
-            属于无效 future。
-            */
-            //     }
-            //     break;
-            // }
+        // case RejectPolicy::DISCARD:
+        // {
+        //     if (tasks.size() >= max_queue_size)
+        //     {
+        //         return std::futrue<return_type>{};
+        /*
+        future.get()会出问题。因为：future没有关联shared state
+        属于无效 future。
+        */
+        //     }
+        //     break;
+        // }
 
         case RejectPolicy::THROW:
         {
