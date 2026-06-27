@@ -106,3 +106,25 @@ target_link_libraries(
     false_sharing_test
     threadpool
 )
+
+add_executable(
+    function_benchmark
+    benchmark/function_benchmark.cpp
+)
+
+add_executable(
+    lambda_benchmark
+    benchmark/lambda_benchmark.cpp
+)
+
+add_executable(
+    submit_benchmark
+    benchmark/submit_benchmark.cpp
+)
+
+target_link_libraries(
+    submit_benchmark
+    threadpool
+)
+
+
