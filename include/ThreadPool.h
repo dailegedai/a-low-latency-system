@@ -6,6 +6,7 @@
 #include <vector>
 #include <queue>
 #include <future>
+#include <atomic>
 
 enum class RejectPolicy
 {
@@ -24,10 +25,20 @@ public:
     auto submit(F &&f, Args &&...args)
         -> std::future<typename std::invoke_result<F, Args...>::type>;
 
+    uint64_t getSubmittedTaskCount() const;
+    uint64_t getCompletedTaskCount() const;
+    uint64_t getBusyWorkerCount() const;
+    size_t getQueueSize();
+    bool idle() const;
+    size_t getThreadCount() const;
+
 private:
     std::vector<std::thread> workers;
     std::queue<std::function<void()>> tasks;
     std::condition_variable not_full_cv;
+    std::atomic<uint64_t> submitted_tasks{0};
+    std::atomic<uint64_t> completed_tasks{0};
+    std::atomic<uint64_t> busy_workers{0};
     std::mutex mtx;
     std::condition_variable cv;
     bool stop{false};
@@ -97,6 +108,7 @@ auto ThreadPool::submit(F &&f, Args &&...args)
 
         tasks.emplace([task]()
                       { (*task)(); });
+        submitted_tasks.fetch_add(1);              
     }
     cv.notify_one();
     return res;

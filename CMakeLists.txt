@@ -127,4 +127,14 @@ target_link_libraries(
     threadpool
 )
 
+add_executable(
+    metrics_test
+    tests/metrics_test.cpp
+)
+
+target_link_libraries(
+    metrics_test
+    threadpool
+)
+
 
