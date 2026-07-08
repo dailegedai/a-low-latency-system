@@ -1,8 +1,10 @@
+#pragma once
+#include "Task.h"
+
 #include <iostream>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include <functional>
 #include <vector>
 #include <queue>
 #include <future>
@@ -34,7 +36,7 @@ public:
 
 private:
     std::vector<std::thread> workers;
-    std::queue<std::function<void()>> tasks;
+    std::queue<Task> tasks;
     std::condition_variable not_full_cv;
     std::atomic<uint64_t> submitted_tasks{0};
     std::atomic<uint64_t> completed_tasks{0};
@@ -106,8 +108,13 @@ auto ThreadPool::submit(F &&f, Args &&...args)
                 "submit on stopped ThreadPool.");
         }
 
-        tasks.emplace([task]()
-                      { (*task)(); });
+        tasks.emplace(
+            Task(
+                [task]() { 
+                    (*task)(); 
+                }
+            )
+        );
         submitted_tasks.fetch_add(1);              
     }
     cv.notify_one();

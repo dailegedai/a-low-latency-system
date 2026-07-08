@@ -20,13 +20,8 @@ int main() {
 
     auto fut = pool.submit(add, 10, 12);
 
-    auto fut1 = pool.submit([]() {
-        throw std::runtime_error("error");
-        return 1;
-    });
 
     std::cout << fut.get() << "\n";
-    std::cout << fut1.get() << std::endl;
 
     std::cout << future1.get() << std::endl;
 

@@ -8,7 +8,7 @@ ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy
             std::cout << "worker thread " 
             << std::this_thread::get_id() << "start \n";
             while(true) {
-                std::function<void()> task;
+                Task task([]{}); 
 
                 {
                     std::unique_lock<std::mutex> lock(mtx);
@@ -28,7 +28,7 @@ ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy
                 
                 busy_workers.fetch_add(1);
 
-                task();
+                task.execute();
 
                 busy_workers.fetch_sub(1);
                 completed_tasks.fetch_add(1);

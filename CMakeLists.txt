@@ -2,79 +2,82 @@ cmake_minimum_required(VERSION 3.10)
 
 project(ll_engine)
 
+# ==========================
+# C++ Standard
+# ==========================
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Debug / Release
+# ==========================
+# Build Type
+# ==========================
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# 编译警告
+# ==========================
+# Compile Options
+# ==========================
 add_compile_options(
     -Wall
     -Wextra
     -Wpedantic
 )
 
-# pthread
+# ==========================
+# Threads
+# ==========================
 find_package(Threads REQUIRED)
 
-# include 路径
+# ==========================
+# Include
+# ==========================
 include_directories(include)
 
-# ThreadPool library
+# ==========================
+# ThreadPool Library
+# ==========================
+
+set(THREADPOOL_SRC
+
+    src/ThreadPool.cpp
+    src/Task.cpp
+)
+
 add_library(
     threadpool
-    src/ThreadPool.cpp
+    ${THREADPOOL_SRC}
 )
 
 target_link_libraries(
     threadpool
-    Threads::Threads
+    PUBLIC Threads::Threads
 )
 
-# main executable
+# ==========================
+# Executables
+# ==========================
+
+set(THREADPOOL_TARGETS
+
+    main
+    benchmark
+    bounded_queue_test
+    reject_policy_test
+    false_sharing_test
+    submit_benchmark
+    metrics_test
+    task_test
+)
+
 add_executable(
     main
     app/main.cpp
 )
 
-target_link_libraries(
-    main
-    threadpool
-)
-
-# benchmark executable
 add_executable(
     benchmark
     benchmark/benchmark.cpp
-)
-
-target_link_libraries(
-    benchmark
-    threadpool
-)
-
-# =========================
-# future test
-# =========================
-add_executable(future_test
-    tests/future_test.cpp
-)
-
-# =========================
-# packaged_task test
-# =========================
-add_executable(packaged_task_test
-    tests/packaged_task_test.cpp
-)
-
-# =========================
-# decltype template invoke_result test
-# =========================
-add_executable(decltype_test
-    tests/decltype_test.cpp
 )
 
 add_executable(
@@ -82,19 +85,9 @@ add_executable(
     tests/bounded_queue_test.cpp
 )
 
-target_link_libraries(
-    bounded_queue_test
-    threadpool
-)
-
 add_executable(
     reject_policy_test
     tests/reject_policy_test.cpp
-)
-
-target_link_libraries(
-    reject_policy_test
-    threadpool
 )
 
 add_executable(
@@ -102,9 +95,38 @@ add_executable(
     tests/false_sharing_test.cpp
 )
 
-target_link_libraries(
-    false_sharing_test
-    threadpool
+add_executable(
+    submit_benchmark
+    benchmark/submit_benchmark.cpp
+)
+
+add_executable(
+    metrics_test
+    tests/metrics_test.cpp
+)
+
+add_executable(
+    task_test
+    tests/task_test.cpp
+)
+
+# ==========================
+# Standalone Tests
+# ==========================
+
+add_executable(
+    future_test
+    tests/future_test.cpp
+)
+
+add_executable(
+    packaged_task_test
+    tests/packaged_task_test.cpp
+)
+
+add_executable(
+    decltype_test
+    tests/decltype_test.cpp
 )
 
 add_executable(
@@ -117,24 +139,15 @@ add_executable(
     benchmark/lambda_benchmark.cpp
 )
 
-add_executable(
-    submit_benchmark
-    benchmark/submit_benchmark.cpp
-)
+# ==========================
+# Link ThreadPool
+# ==========================
 
-target_link_libraries(
-    submit_benchmark
-    threadpool
-)
+foreach(target ${THREADPOOL_TARGETS})
 
-add_executable(
-    metrics_test
-    tests/metrics_test.cpp
-)
+    target_link_libraries(
+        ${target}
+        PRIVATE threadpool
+    )
 
-target_link_libraries(
-    metrics_test
-    threadpool
-)
-
-
+endforeach()
