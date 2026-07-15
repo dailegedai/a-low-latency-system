@@ -42,6 +42,7 @@ set(THREADPOOL_SRC
 
     src/ThreadPool.cpp
     src/Task.cpp
+    src/Worker.cpp
 )
 
 add_library(
@@ -68,6 +69,7 @@ set(THREADPOOL_TARGETS
     submit_benchmark
     metrics_test
     task_test
+    shutdown_test
 )
 
 add_executable(
@@ -108,6 +110,11 @@ add_executable(
 add_executable(
     task_test
     tests/task_test.cpp
+)
+
+add_executable(
+    shutdown_test
+    tests/shutdown_test.cpp
 )
 
 # ==========================

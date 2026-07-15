@@ -1,7 +1,7 @@
 #pragma once
 #include "Task.h"
+#include "Worker.h"
 
-#include <iostream>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -27,15 +27,18 @@ public:
     auto submit(F &&f, Args &&...args)
         -> std::future<typename std::invoke_result<F, Args...>::type>;
 
+    void shutdown();
+
     uint64_t getSubmittedTaskCount() const;
     uint64_t getCompletedTaskCount() const;
     uint64_t getBusyWorkerCount() const;
     size_t getQueueSize();
     bool idle() const;
     size_t getThreadCount() const;
+    bool isStopping() const;
 
 private:
-    std::vector<std::thread> workers;
+    std::vector<Worker> workers;
     std::queue<Task> tasks;
     std::condition_variable not_full_cv;
     std::atomic<uint64_t> submitted_tasks{0};

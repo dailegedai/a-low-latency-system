@@ -1,89 +1,108 @@
 #include "../include/ThreadPool.h"
-#include  <iostream>
 #include <chrono>
 
-ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy) : stop(false), max_queue_size(queue_size), reject_policy(policy) {
+ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy) : stop(false), max_queue_size(queue_size), reject_policy(policy)
+{
     for (size_t i = 0; i < num_thread; i++) {
-        workers.emplace_back([this]() {
-            std::cout << "worker thread " 
-            << std::this_thread::get_id() << "start \n";
-            while(true) {
-                Task task([]{}); 
+        workers.emplace_back(
+            std::thread([this]()
+                        {
 
-                {
-                    std::unique_lock<std::mutex> lock(mtx);
-                    cv.wait(lock, [this]() {
-                        return stop || !tasks.empty();
-                    });
+                while(true) {
+                    Task task([]{}); 
 
-                    if (stop && tasks.empty()) {
-                        return;
+                    {
+                        std::unique_lock<std::mutex> lock(mtx);
+                        cv.wait(lock, [this]() {
+                            return stop || !tasks.empty();
+                        });
+
+                        if (stop && tasks.empty()) {
+                            return;
+                        }
+
+                        task = std::move(tasks.front());
+                        tasks.pop();
+
+                        not_full_cv.notify_one();
                     }
+                    
+                    busy_workers.fetch_add(1);
 
-                    task = std::move(tasks.front());
-                    tasks.pop();
+                    task.execute();
 
-                    not_full_cv.notify_one();
-                }
-                
-                busy_workers.fetch_add(1);
+                    busy_workers.fetch_sub(1);
+                    completed_tasks.fetch_add(1);
 
-                task.execute();
-
-                busy_workers.fetch_sub(1);
-                completed_tasks.fetch_add(1);
-
-                // to do
-                // try
-                // {
-                //     task();
-                // }
-                // catch (...)
-                // {
-                //     busy_workers.fetch_sub(1);
-                //     completed_tasks.fetch_add(1);
-                //     throw;
-                // }
-            }
-        });
+                    // to do
+                    // try
+                    // {
+                    //     task();
+                    // }
+                    // catch (...)
+                    // {
+                    //     busy_workers.fetch_sub(1);
+                    //     completed_tasks.fetch_add(1);
+                    //     throw;
+                    // }
+                } }));
     }
 }
 
-ThreadPool::~ThreadPool() {
+ThreadPool::~ThreadPool()
+{
+    shutdown();
+}
+
+void ThreadPool::shutdown()
+{
     {
         std::lock_guard<std::mutex> lock(mtx);
+        if (stop) {
+            return;
+        }
         stop = true;
     }
+
     cv.notify_all();
 
-    for (std::thread &worker : workers) {
-        if (worker.joinable()) { 
-            worker.join();
-        }
+    for (Worker &worker : workers) {
+        worker.join();
     }
 }
 
-uint64_t ThreadPool::getSubmittedTaskCount() const {
+uint64_t ThreadPool::getSubmittedTaskCount() const
+{
     return submitted_tasks.load();
 }
 
-uint64_t ThreadPool::getCompletedTaskCount() const {
+uint64_t ThreadPool::getCompletedTaskCount() const
+{
     return completed_tasks.load();
 }
 
-uint64_t ThreadPool::getBusyWorkerCount() const {
+uint64_t ThreadPool::getBusyWorkerCount() const
+{
     return busy_workers.load();
 }
 
-uint64_t ThreadPool::getQueueSize() {
+uint64_t ThreadPool::getQueueSize()
+{
     std::lock_guard<std::mutex> lock(mtx);
-    return  tasks.size();
+    return tasks.size();
 }
 
-bool ThreadPool::idle() const {
+bool ThreadPool::idle() const
+{
     return getBusyWorkerCount() == 0;
 }
 
-size_t ThreadPool::getThreadCount() const {
+size_t ThreadPool::getThreadCount() const
+{
     return workers.size();
+}
+
+bool ThreadPool::isStopping() const
+{
+    return stop;
 }

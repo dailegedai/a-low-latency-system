@@ -4,6 +4,7 @@
 #include <iostream>
 
 int main() {
+    std::cout << "========== Metrics Test ==========\n";
     ThreadPool pool(4, 100);
 
     for (int i = 0; i < 20; ++i) {
@@ -24,4 +25,7 @@ int main() {
             std::chrono::milliseconds(200)
         );
     }
+
+    std::cout << "all tasks completed\n";
+    std::cout << "========== Metrics Test PASSED ==========\n";
 }

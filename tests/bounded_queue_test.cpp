@@ -4,6 +4,7 @@
 #include <iostream>
 
 int main() {
+    std::cout << "========== Bounded Queue Test ==========\n";
     ThreadPool pool(2, 5);
     for (int i = 0; i < 20; i++) {
         std::cout << "submit " << i << std::endl;
@@ -13,4 +14,6 @@ int main() {
             std::cout << "submit " << i << "done" << std::endl;
         });
     }
+
+    std::cout << "========== Bounded Queue Test PASSED ==========\n";
 }

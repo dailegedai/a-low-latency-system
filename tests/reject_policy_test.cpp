@@ -5,6 +5,7 @@
 
 int main()
 {
+    std::cout << "========== Reject Policy Test (THROW) ==========\n";
     ThreadPool pool(2, 5, RejectPolicy::THROW);
 
     try
@@ -23,4 +24,6 @@ int main()
     {
         std::cout << "exception: " << e.what() << std::endl;
     }
+
+    std::cout << "========== Reject Policy Test DONE ==========\n";
 }
