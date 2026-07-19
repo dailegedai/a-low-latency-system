@@ -70,6 +70,8 @@ set(THREADPOOL_TARGETS
     metrics_test
     task_test
     shutdown_test
+    latency_benchmark
+    throughput_benchmark
 )
 
 add_executable(
@@ -117,6 +119,11 @@ add_executable(
     tests/shutdown_test.cpp
 )
 
+add_executable(
+    ring_buffer_test
+    tests/ring_buffer_test.cpp
+)
+
 # ==========================
 # Standalone Tests
 # ==========================
@@ -144,6 +151,22 @@ add_executable(
 add_executable(
     lambda_benchmark
     benchmark/lambda_benchmark.cpp
+)
+
+add_executable(
+    queue_benchmark
+    benchmark/queue_benchmark.cpp
+)
+
+add_executable(
+    latency_benchmark
+    benchmark/latency_benchmark.cpp
+)
+
+
+add_executable(
+    throughput_benchmark
+    benchmark/throughput_benchmark.cpp
 )
 
 # ==========================

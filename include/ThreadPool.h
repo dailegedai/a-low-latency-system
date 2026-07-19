@@ -1,6 +1,7 @@
 #pragma once
 #include "Task.h"
 #include "Worker.h"
+#include "RingBuffer.h"
 
 #include <thread>
 #include <mutex>
