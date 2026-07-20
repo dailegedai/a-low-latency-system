@@ -7,9 +7,13 @@
 
 class Task {
 public:
+    Task() = default;
     explicit Task(std::function<void()> func);
 
+    void setFunction(std::function<void()> func);
+
     void execute();
+    void reset();
 
     uint64_t id() const;
     std::chrono::steady_clock::time_point submitTime() const;
