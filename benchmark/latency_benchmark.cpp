@@ -134,13 +134,13 @@ int main()
         std::cout << "\n";
     }
 
-    // 7. Queue full contention — BLOCK policy
+    // 7. Queue full contention — BLOCK THROW DISCARD policy
     {
         std::cout << "--- queue full contention ---\n";
         {
-            ThreadPool pool(2, 4, RejectPolicy::BLOCK);
+            ThreadPool pool(2, 128, RejectPolicy::BLOCK);
             {
-                Benchmark bm("BLOCK policy, queue=4, 2 threads");
+                Benchmark bm("BLOCK policy, queue=128, 2 threads");
                 for (int i = 0; i < N; i++) {
                     pool.submit(compute_pi, 100);
                 }
@@ -148,10 +148,10 @@ int main()
             pool.shutdown();
         }
         {
-            ThreadPool pool(2, 1024, RejectPolicy::THROW);
+            ThreadPool pool(2, 128, RejectPolicy::THROW);
             int throw_count = 0;
             {
-                Benchmark bm("THROW policy, queue=1024, 2 threads");
+                Benchmark bm("THROW policy, queue=128, 2 threads");
                 for (int i = 0; i < N; i++) {
                     try {
                         pool.submit(compute_pi, 100);
@@ -160,7 +160,29 @@ int main()
                     }
                 }
             }
-            std::cout << "  (THROW count: " << throw_count << ")\n";
+            std::cout << "  (THROW count: " << throw_count << " THROW percent " << (double)(throw_count * 100) / N  <<"%)\n";
+            pool.shutdown();
+        }
+        {
+            ThreadPool pool(2, 128, RejectPolicy::DISCARD);
+            int discard_count = 0;
+            {
+                Benchmark bm("DISCARD policy, queue=128, 2 threads");
+                std::vector<std::future<double>> futs;
+                futs.reserve(N);
+                for (int i = 0; i < N; i++) {
+                    futs.push_back(pool.submit(compute_pi, 100));
+                }
+                volatile double sum = 0.0;
+                for (auto &f : futs) {
+                    try {
+                        sum += f.get();
+                    } catch (const std::future_error &) {
+                        discard_count++;
+                    }
+                }
+            }
+            std::cout << "  (DISCARD count: " << discard_count << " DISCARD percent " << (double)(discard_count * 100) / N  <<"%)\n";
             pool.shutdown();
         }
         std::cout << "\n";

@@ -45,8 +45,10 @@ ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy
                     //     completed_tasks.fetch_add(1);
                     //     throw;
                     // }
-                } }));
-    }
+                }
+            }
+        )
+    );}
 }
 
 ThreadPool::~ThreadPool()

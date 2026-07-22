@@ -1,4 +1,4 @@
-#include "../include/Memory.h"
+#include "../include/MemoryPool.h"
 
 #include <algorithm>
 #include <atomic>
@@ -13,7 +13,8 @@
 using Clock = std::chrono::steady_clock;
 using ns = std::chrono::nanoseconds;
 
-struct Stats {
+struct Stats
+{
     double min{0};
     double avg{0};
     double max{0};
@@ -21,7 +22,7 @@ struct Stats {
     double p99{0};
 };
 
-static Stats compute_stats(std::vector<double>& samples)
+static Stats compute_stats(std::vector<double> &samples)
 {
     std::sort(samples.begin(), samples.end());
     size_t n = samples.size();
@@ -34,7 +35,7 @@ static Stats compute_stats(std::vector<double>& samples)
     return s;
 }
 
-static void print_stats(const char* label, const Stats& s)
+static void print_stats(const char *label, const Stats &s)
 {
     std::cout << "  " << label << ":\n";
     std::cout << "    min: " << s.min << " ns\n";
@@ -52,8 +53,8 @@ static void test_functional()
 {
     std::cout << "[Functional] acquire within capacity\n";
     {
-        Memory m(4);
-        Task* t = m.acquire([](){});
+        MemoryPool m(4);
+        Task *t = m.acquire();
         assert(t != nullptr);
         t->execute();
         m.release(t);
@@ -62,20 +63,20 @@ static void test_functional()
 
     std::cout << "[Functional] acquire on empty pool returns nullptr\n";
     {
-        Memory m(2);
-        assert(m.acquire([](){}) != nullptr);
-        assert(m.acquire([](){}) != nullptr);
-        assert(m.acquire([](){}) == nullptr);
+        MemoryPool m(2);
+        assert(m.acquire() != nullptr);
+        assert(m.acquire() != nullptr);
+        assert(m.acquire() == nullptr);
     }
     std::cout << "  PASS\n";
 
     std::cout << "[Functional] release and re-acquire reuses object\n";
     {
-        Memory m(1);
-        Task* t1 = m.acquire([](){});
+        MemoryPool m(1);
+        Task *t1 = m.acquire();
         assert(t1 != nullptr);
         m.release(t1);
-        Task* t2 = m.acquire([](){});
+        Task *t2 = m.acquire();
         assert(t2 != nullptr);
         assert(t2 == t1);
         (void)t2;
@@ -84,11 +85,12 @@ static void test_functional()
 
     std::cout << "[Functional] function replaced after re-acquire\n";
     {
-        Memory m(1);
+        MemoryPool m(1);
         int val = 0;
-        Task* t = m.acquire([&val]() { val = 1; });
+        Task *t = m.acquire();
         m.release(t);
-        t = m.acquire([&val]() { val = 2; });
+        t = m.acquire();
+        t->setFunction([&val]() { val = 2;});
         t->execute();
         assert(val == 2);
     }
@@ -96,8 +98,8 @@ static void test_functional()
 
     std::cout << "[Functional] zero capacity\n";
     {
-        Memory m(0);
-        assert(m.acquire([](){}) == nullptr);
+        MemoryPool m(0);
+        assert(m.acquire() == nullptr);
     }
     std::cout << "  PASS\n";
 }
@@ -120,43 +122,45 @@ static void test_latency()
 
     // warmup
     {
-        Memory m(1024);
-        for (int i = 0; i < WARMUP; ++i) {
-            Task* t = m.acquire([](){});
+        MemoryPool m(1024);
+        for (int i = 0; i < WARMUP; ++i)
+        {
+            Task *t = m.acquire();
             m.release(t);
         }
     }
     {
-        for (int i = 0; i < WARMUP; ++i) {
-            Task* t = new Task([](){});
+        for (int i = 0; i < WARMUP; ++i)
+        {
+            Task *t = new Task([]() {});
             delete t;
         }
     }
 
     // pool latency
     {
-        Memory m(1024);
-        for (int i = 0; i < SAMPLES; ++i) {
+        MemoryPool m(1024);
+        for (int i = 0; i < SAMPLES; ++i)
+        {
             auto start = Clock::now();
-            Task* t = m.acquire([](){});
+            Task *t = m.acquire();
             auto end = Clock::now();
             m.release(t);
             pool_ns.push_back(
-                std::chrono::duration_cast<ns>(end - start).count()
-            );
+                std::chrono::duration_cast<ns>(end - start).count());
         }
     }
 
     // raw new/delete latency
     {
-        for (int i = 0; i < SAMPLES; ++i) {
+        for (int i = 0; i < SAMPLES; ++i)
+        {
             auto start = Clock::now();
-            Task* t = new Task([](){});
+            Task *t = new Task([]() {});
             auto end = Clock::now();
             delete t;
             raw_ns.push_back(
-                std::chrono::duration_cast<ns>(end - start).count()
-            );
+                std::chrono::duration_cast<ns>(end - start).count());
         }
     }
 
@@ -182,10 +186,11 @@ static void test_throughput()
 
     // pool
     {
-        Memory m(1024);
+        MemoryPool m(1024);
         auto start = Clock::now();
-        for (int i = 0; i < OPS; ++i) {
-            Task* t = m.acquire([](){});
+        for (int i = 0; i < OPS; ++i)
+        {
+            Task *t = m.acquire();
             m.release(t);
         }
         auto end = Clock::now();
@@ -197,8 +202,9 @@ static void test_throughput()
     // raw
     {
         auto start = Clock::now();
-        for (int i = 0; i < OPS; ++i) {
-            Task* t = new Task([](){});
+        for (int i = 0; i < OPS; ++i)
+        {
+            Task *t = new Task([]() {});
             delete t;
         }
         auto end = Clock::now();
@@ -216,10 +222,11 @@ static void test_contended()
 {
     std::cout << "\n---------- Contended Pool (shared + mutex) ----------\n";
 
-    for (int thread_count : {2, 4, 8}) {
+    for (int thread_count : {2, 4, 8})
+    {
         constexpr int OPS_PER_THREAD = 500000;
 
-        Memory shared_pool(thread_count * 64);
+        MemoryPool shared_pool(thread_count * 64);
         std::mutex mtx;
         std::atomic<int> ready{0};
         std::atomic<bool> start_flag{false};
@@ -229,26 +236,28 @@ static void test_contended()
 
         auto start = Clock::now();
 
-        for (int t = 0; t < thread_count; ++t) {
-            threads.emplace_back([&]() {
+        for (int t = 0; t < thread_count; ++t)
+        {
+            threads.emplace_back([&]()
+                                 {
                 ready.fetch_add(1, std::memory_order_release);
                 while (!start_flag.load(std::memory_order_acquire)) {
                     std::this_thread::yield();
                 }
                 for (int i = 0; i < OPS_PER_THREAD; ++i) {
-                    std::lock_guard<std::mutex> lock(mtx);
-                    Task* task = shared_pool.acquire([](){});
+                    Task* task = shared_pool.acquire();
                     shared_pool.release(task);
-                }
-            });
+                } });
         }
 
-        while (ready.load(std::memory_order_acquire) < thread_count) {
+        while (ready.load(std::memory_order_acquire) < thread_count)
+        {
             std::this_thread::yield();
         }
         start_flag.store(true, std::memory_order_release);
 
-        for (auto& th : threads) {
+        for (auto &th : threads)
+        {
             th.join();
         }
 
@@ -271,7 +280,8 @@ static void test_thread_local()
 {
     std::cout << "\n---------- Thread-Local Pool (no contention) ----------\n";
 
-    for (int thread_count : {1, 2, 4, 8}) {
+    for (int thread_count : {1, 2, 4, 8})
+    {
         constexpr int OPS_PER_THREAD = 1000000;
 
         std::atomic<int> ready{0};
@@ -282,26 +292,29 @@ static void test_thread_local()
 
         auto start = Clock::now();
 
-        for (int t = 0; t < thread_count; ++t) {
-            threads.emplace_back([&]() {
-                Memory local_pool(64);
+        for (int t = 0; t < thread_count; ++t)
+        {
+            threads.emplace_back([&]()
+                                 {
+                MemoryPool local_pool(64);
                 ready.fetch_add(1, std::memory_order_release);
                 while (!start_flag.load(std::memory_order_acquire)) {
                     std::this_thread::yield();
                 }
                 for (int i = 0; i < OPS_PER_THREAD; ++i) {
-                    Task* task = local_pool.acquire([](){});
+                    Task* task = local_pool.acquire();
                     local_pool.release(task);
-                }
-            });
+                } });
         }
 
-        while (ready.load(std::memory_order_acquire) < thread_count) {
+        while (ready.load(std::memory_order_acquire) < thread_count)
+        {
             std::this_thread::yield();
         }
         start_flag.store(true, std::memory_order_release);
 
-        for (auto& th : threads) {
+        for (auto &th : threads)
+        {
             th.join();
         }
 
@@ -314,6 +327,35 @@ static void test_thread_local()
                   << static_cast<long>(total_ops / sec / thread_count)
                   << " ops/sec/thread)\n";
     }
+}
+
+static void test_thread_safety()
+{
+    std::cout << "\n---------- ThreadSafety concurrent acquire/release ----------\n";
+    MemoryPool pool(64);
+    std::atomic<int> ready{0};
+    std::atomic<bool> start{false};
+    std::vector<std::thread> threads;
+
+    for (int t = 0; t < 4; ++t)
+    {
+        threads.emplace_back([&]()
+                             {
+            ready.fetch_add(1, std::memory_order_release);
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (int i = 0; i < 10000; ++i) {
+                Task* task = pool.acquire();
+                pool.release(task);
+            } });
+    }
+    while (ready.load() < 4)
+        std::this_thread::yield();
+    start.store(true, std::memory_order_release);
+    for (auto &th : threads)
+        th.join();
+    assert(pool.available() == 64);
+    std::cout << "  PASS\n";
 }
 
 /* =====================================================================
@@ -331,6 +373,7 @@ int main()
     test_throughput();
     test_contended();
     test_thread_local();
+    test_thread_safety();
 
     std::cout << "\n========== ALL TESTS PASSED ==========\n";
 

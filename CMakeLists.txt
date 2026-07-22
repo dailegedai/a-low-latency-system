@@ -39,7 +39,7 @@ include_directories(include)
 # ==========================
 
 set(THREADPOOL_SRC
-    src/Memory.cpp
+    src/MemoryPool.cpp
     src/ThreadPool.cpp
     src/Task.cpp
     src/Worker.cpp
