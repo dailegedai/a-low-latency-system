@@ -1,42 +1,46 @@
 #include "../include/MemoryPool.h"
 
-MemoryPool::MemoryPool(size_t capacity)
+MemoryPool::MemoryPool(size_t capacity) : capacity_(capacity), storage_(::operator new(capacity * sizeof(Task)))
 {
-    pool_.reserve(capacity);
-    for (size_t i = 0; i < capacity; i++)
-    {
-        pool_.push_back(new Task());
+    free_.reserve(capacity);
+    auto* p = static_cast<char*>(storage_);
+    for (size_t i = 0; i < capacity; ++i) {
+        free_.push_back(new (p + i * sizeof(Task)) Task());
     }
 }
 
 MemoryPool::~MemoryPool()
 {
-    for (Task *t : pool_)
-    {
-        delete t;
-    }
+    for (Task *t : free_) t->~Task();
+    ::operator delete(storage_);
 }
+
 
 Task *MemoryPool::acquire()
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    if (pool_.empty())
+    if (free_.empty())
     {
         return nullptr;
     }
-    Task *t = pool_.back();
-    pool_.pop_back();
+    Task *t = free_.back();
+    free_.pop_back();
     return t;
 }
 
 void MemoryPool::release(Task *task)
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    pool_.push_back(task);
+    free_.push_back(task);
 }
 
 size_t MemoryPool::available() const
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    return pool_.size();
+    return free_.size();
+}
+
+size_t MemoryPool::capacity() const
+{
+    return capacity_;
 }

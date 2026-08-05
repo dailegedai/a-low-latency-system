@@ -130,6 +130,14 @@ add_executable(
     tests/memory_pool_test.cpp
 )
 
+add_executable(
+    placement_new_test
+    tests/placement_new_test.cpp
+)
+target_link_libraries(
+    placement_new_test PRIVATE threadpool
+) 
+
 # ==========================
 # Standalone Tests
 # ==========================
