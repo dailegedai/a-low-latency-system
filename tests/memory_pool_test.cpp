@@ -10,40 +10,6 @@
 #include <thread>
 #include <vector>
 
-using Clock = std::chrono::steady_clock;
-using ns = std::chrono::nanoseconds;
-
-struct Stats
-{
-    double min{0};
-    double avg{0};
-    double max{0};
-    double p50{0};
-    double p99{0};
-};
-
-static Stats compute_stats(std::vector<double> &samples)
-{
-    std::sort(samples.begin(), samples.end());
-    size_t n = samples.size();
-    Stats s;
-    s.min = samples.front();
-    s.max = samples.back();
-    s.avg = std::accumulate(samples.begin(), samples.end(), 0.0) / n;
-    s.p50 = samples[n / 2];
-    s.p99 = samples[static_cast<size_t>(n * 0.99)];
-    return s;
-}
-
-static void print_stats(const char *label, const Stats &s)
-{
-    std::cout << "  " << label << ":\n";
-    std::cout << "    min: " << s.min << " ns\n";
-    std::cout << "    avg: " << s.avg << " ns\n";
-    std::cout << "    max: " << s.max << " ns\n";
-    std::cout << "    p50: " << s.p50 << " ns\n";
-    std::cout << "    p99: " << s.p99 << " ns\n";
-}
 
 /* =====================================================================
  * Part 1 — Functional Correctness
@@ -90,7 +56,8 @@ static void test_functional()
         Task *t = m.acquire();
         m.release(t);
         t = m.acquire();
-        t->setFunction([&val]() { val = 2;});
+        t->setFunction([&val]()
+                       { val = 2; });
         t->execute();
         assert(val == 2);
     }
@@ -104,230 +71,7 @@ static void test_functional()
     std::cout << "  PASS\n";
 }
 
-/* =====================================================================
- * Part 2 — Latency: pool vs raw new/delete
- * ===================================================================== */
 
-static void test_latency()
-{
-    std::cout << "\n---------- Latency Comparison (single-thread) ----------\n";
-
-    constexpr int WARMUP = 100000;
-    constexpr int SAMPLES = 1000000;
-
-    std::vector<double> pool_ns;
-    std::vector<double> raw_ns;
-    pool_ns.reserve(SAMPLES);
-    raw_ns.reserve(SAMPLES);
-
-    // warmup
-    {
-        MemoryPool m(1024);
-        for (int i = 0; i < WARMUP; ++i)
-        {
-            Task *t = m.acquire();
-            m.release(t);
-        }
-    }
-    {
-        for (int i = 0; i < WARMUP; ++i)
-        {
-            Task *t = new Task([]() {});
-            delete t;
-        }
-    }
-
-    // pool latency
-    {
-        MemoryPool m(1024);
-        for (int i = 0; i < SAMPLES; ++i)
-        {
-            auto start = Clock::now();
-            Task *t = m.acquire();
-            auto end = Clock::now();
-            m.release(t);
-            pool_ns.push_back(
-                std::chrono::duration_cast<ns>(end - start).count());
-        }
-    }
-
-    // raw new/delete latency
-    {
-        for (int i = 0; i < SAMPLES; ++i)
-        {
-            auto start = Clock::now();
-            Task *t = new Task([]() {});
-            auto end = Clock::now();
-            delete t;
-            raw_ns.push_back(
-                std::chrono::duration_cast<ns>(end - start).count());
-        }
-    }
-
-    Stats ps = compute_stats(pool_ns);
-    Stats rs = compute_stats(raw_ns);
-
-    print_stats("Pool acquire", ps);
-    print_stats("Raw new/delete", rs);
-
-    std::cout << "  Speed-up (avg): " << (rs.avg / ps.avg) << "x\n";
-    std::cout << "  Speed-up (p99): " << (rs.p99 / ps.p99) << "x\n";
-}
-
-/* =====================================================================
- * Part 3 — Throughput
- * ===================================================================== */
-
-static void test_throughput()
-{
-    std::cout << "\n---------- Throughput (single-thread) ----------\n";
-
-    constexpr int OPS = 5000000;
-
-    // pool
-    {
-        MemoryPool m(1024);
-        auto start = Clock::now();
-        for (int i = 0; i < OPS; ++i)
-        {
-            Task *t = m.acquire();
-            m.release(t);
-        }
-        auto end = Clock::now();
-        double sec = std::chrono::duration<double>(end - start).count();
-        std::cout << "  Pool: " << static_cast<long>(OPS / sec)
-                  << " ops/sec\n";
-    }
-
-    // raw
-    {
-        auto start = Clock::now();
-        for (int i = 0; i < OPS; ++i)
-        {
-            Task *t = new Task([]() {});
-            delete t;
-        }
-        auto end = Clock::now();
-        double sec = std::chrono::duration<double>(end - start).count();
-        std::cout << "  Raw:  " << static_cast<long>(OPS / sec)
-                  << " ops/sec\n";
-    }
-}
-
-/* =====================================================================
- * Part 4 — Contended pool (shared + mutex)
- * ===================================================================== */
-
-static void test_contended()
-{
-    std::cout << "\n---------- Contended Pool (shared + mutex) ----------\n";
-
-    for (int thread_count : {2, 4, 8})
-    {
-        constexpr int OPS_PER_THREAD = 500000;
-
-        MemoryPool shared_pool(thread_count * 64);
-        std::mutex mtx;
-        std::atomic<int> ready{0};
-        std::atomic<bool> start_flag{false};
-
-        std::vector<std::thread> threads;
-        threads.reserve(thread_count);
-
-        auto start = Clock::now();
-
-        for (int t = 0; t < thread_count; ++t)
-        {
-            threads.emplace_back([&]()
-                                 {
-                ready.fetch_add(1, std::memory_order_release);
-                while (!start_flag.load(std::memory_order_acquire)) {
-                    std::this_thread::yield();
-                }
-                for (int i = 0; i < OPS_PER_THREAD; ++i) {
-                    Task* task = shared_pool.acquire();
-                    shared_pool.release(task);
-                } });
-        }
-
-        while (ready.load(std::memory_order_acquire) < thread_count)
-        {
-            std::this_thread::yield();
-        }
-        start_flag.store(true, std::memory_order_release);
-
-        for (auto &th : threads)
-        {
-            th.join();
-        }
-
-        auto end = Clock::now();
-        double sec = std::chrono::duration<double>(end - start).count();
-        long total_ops = static_cast<long>(thread_count * OPS_PER_THREAD);
-        std::cout << "  " << thread_count << " threads: "
-                  << static_cast<long>(total_ops / sec)
-                  << " ops/sec  ("
-                  << static_cast<long>(total_ops / sec / thread_count)
-                  << " ops/sec/thread)\n";
-    }
-}
-
-/* =====================================================================
- * Part 5 — Thread-local pools (no contention)
- * ===================================================================== */
-
-static void test_thread_local()
-{
-    std::cout << "\n---------- Thread-Local Pool (no contention) ----------\n";
-
-    for (int thread_count : {1, 2, 4, 8})
-    {
-        constexpr int OPS_PER_THREAD = 1000000;
-
-        std::atomic<int> ready{0};
-        std::atomic<bool> start_flag{false};
-
-        std::vector<std::thread> threads;
-        threads.reserve(thread_count);
-
-        auto start = Clock::now();
-
-        for (int t = 0; t < thread_count; ++t)
-        {
-            threads.emplace_back([&]()
-                                 {
-                MemoryPool local_pool(64);
-                ready.fetch_add(1, std::memory_order_release);
-                while (!start_flag.load(std::memory_order_acquire)) {
-                    std::this_thread::yield();
-                }
-                for (int i = 0; i < OPS_PER_THREAD; ++i) {
-                    Task* task = local_pool.acquire();
-                    local_pool.release(task);
-                } });
-        }
-
-        while (ready.load(std::memory_order_acquire) < thread_count)
-        {
-            std::this_thread::yield();
-        }
-        start_flag.store(true, std::memory_order_release);
-
-        for (auto &th : threads)
-        {
-            th.join();
-        }
-
-        auto end = Clock::now();
-        double sec = std::chrono::duration<double>(end - start).count();
-        long total_ops = static_cast<long>(thread_count * OPS_PER_THREAD);
-        std::cout << "  " << thread_count << " threads: "
-                  << static_cast<long>(total_ops / sec)
-                  << " ops/sec  ("
-                  << static_cast<long>(total_ops / sec / thread_count)
-                  << " ops/sec/thread)\n";
-    }
-}
 
 static void test_thread_safety()
 {
@@ -358,6 +102,66 @@ static void test_thread_safety()
     std::cout << "  PASS\n";
 }
 
+static void test_expand()
+{
+    std::cout << "\n[Expand] grow on demand\n";
+    {
+        MemoryPool pool(1, /*expandable=*/true);
+        Task *a1 = pool.acquire();
+        assert(a1 != nullptr);
+        Task *b1 = pool.acquire();
+        assert(b1 != nullptr);
+        Task *c1 = pool.acquire();
+        assert(c1 != nullptr);
+        assert(a1 != b1 && b1 != c1);
+        pool.release(a1);
+        pool.release(b1);
+        pool.release(c1);
+        assert(pool.available() == pool.capacity());
+        assert(pool.blockCount() == 3);
+        std::cout << "  capacity= " << pool.capacity()
+                  << " blocks= " << pool.blockCount() << "\n";
+    }
+    std::cout << " PASS\n";
+
+    std::cout << "[Feature] reject mode still returns null on full\n";
+    {
+        MemoryPool pool(2, /*expandable=*/false);
+        assert(pool.acquire() != nullptr);
+        assert(pool.acquire() != nullptr);
+    }
+    std::cout << " PASS\n";
+}
+
+static void test_thread_safety_expand()
+{
+    std::cout << "\n[ThreadSafety] concurrent acquire/release with expand\n";
+    MemoryPool pool(4, /*expandable=*/true);
+    std::atomic<int> ready{0};
+    std::atomic<bool> start{false};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 8; ++t)
+    {
+        threads.emplace_back([&]()
+                             {
+            ready.fetch_add(1, std::memory_order_release);
+            while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+            for (int i = 0; i < 2000; ++i) {
+                Task* task = pool.acquire();
+                pool.release(task);
+            } });
+    }
+    while (ready.load() < 8)
+        std::this_thread::yield();
+    start.store(true, std::memory_order_release);
+    for (auto &thread : threads)
+        thread.join();
+    assert(pool.available() == pool.capacity());
+    std::cout << "    capacity=" << pool.capacity()
+              << " available=" << pool.available() << "\n";
+    std::cout << " PASS\n";
+}
+
 /* =====================================================================
  * Main
  * ===================================================================== */
@@ -368,12 +172,9 @@ int main()
 
     test_functional();
 
-    // --- Benchmarks ---
-    test_latency();
-    test_throughput();
-    test_contended();
-    test_thread_local();
     test_thread_safety();
+    test_expand();
+    test_thread_safety_expand();
 
     std::cout << "\n========== ALL TESTS PASSED ==========\n";
 

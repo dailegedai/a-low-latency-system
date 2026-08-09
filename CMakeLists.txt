@@ -71,6 +71,9 @@ set(THREADPOOL_TARGETS
     task_test
     shutdown_test
     memory_pool_test
+    memory_pool_benchmark
+    locked_ring_buffer_test
+    ring_buffer_mpsc_benchmark
     latency_benchmark
     throughput_benchmark
 )
@@ -136,7 +139,7 @@ add_executable(
 )
 target_link_libraries(
     placement_new_test PRIVATE threadpool
-) 
+)
 
 # ==========================
 # Standalone Tests
@@ -155,6 +158,11 @@ add_executable(
 add_executable(
     decltype_test
     tests/decltype_test.cpp
+)
+
+add_executable(
+    locked_ring_buffer_test
+    tests/locked_ring_buffer_test.cpp
 )
 
 add_executable(
@@ -181,6 +189,16 @@ add_executable(
 add_executable(
     throughput_benchmark
     benchmark/throughput_benchmark.cpp
+)
+
+add_executable(
+    memory_pool_benchmark
+    benchmark/memory_pool_benchmark.cpp
+)
+
+add_executable(
+    ring_buffer_mpsc_benchmark
+    benchmark/ring_buffer_mpsc_benchmark.cpp
 )
 
 # ==========================
