@@ -1,6 +1,6 @@
 #include "../include/RingBuffer.h"
 
-#include <cassert>
+#include "check.h"
 #include <iostream>
 
 int main()
@@ -8,23 +8,23 @@ int main()
     std::cout << "=========== FIFO TEST ===========\n";
     RingBuffer<int> queue(2);
 
-    assert(queue.empty());
+    CHECK(queue.empty());
 
     queue.push(1);
     queue.push(2);
 
     std::cout << "size of queue is: " << queue.size() << "\n";
-    assert(queue.full());
+    CHECK(queue.full());
     
     int x = 0;
     queue.pop(x);
-    assert(x == 1);
+    CHECK(x == 1);
     
     int y = 0;
     queue.pop(y);
-    assert(y == 2);
+    CHECK(y == 2);
 
-    assert(queue.empty());
+    CHECK(queue.empty());
 
     std::cout << "FIFO Test Passed. \n";
 
@@ -61,8 +61,8 @@ int main()
     q2.pop(a);
     v.emplace_back(a);
 
-    for (int i = 0; i < v.size(); i++) {
-        assert((i + 1) == v[i]);
+    for (size_t i = 0; i < v.size(); i++) {
+        CHECK((i + 1) == static_cast<size_t>(v[i]));
         std::cout << v[i] << " ";
     }
 

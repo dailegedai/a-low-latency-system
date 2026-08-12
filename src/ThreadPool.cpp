@@ -1,7 +1,11 @@
 #include "../include/ThreadPool.h"
 #include <chrono>
 
-ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy) : stop(false), max_queue_size(queue_size), reject_policy(policy)
+ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy) 
+    : max_queue_size(queue_size),
+    tasks(queue_size),
+    stop(false),
+    reject_policy(policy)
 {
     for (size_t i = 0; i < num_thread; i++) {
         workers.emplace_back(
@@ -9,8 +13,7 @@ ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy
                         {
 
                 while(true) {
-                    Task task([]{}); 
-
+                    Task task; 
                     {
                         std::unique_lock<std::mutex> lock(mtx);
                         cv.wait(lock, [this]() {
@@ -21,9 +24,9 @@ ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy
                             return;
                         }
 
-                        task = std::move(tasks.front());
-                        tasks.pop();
-
+                        if (!tasks.pop(task)) {
+                            continue;
+                        }
                         not_full_cv.notify_one();
                     }
                     

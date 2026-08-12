@@ -1,8 +1,8 @@
 #include "../include/MemoryPool.h"
 
+#include "check.h"
 #include <algorithm>
 #include <atomic>
-#include <cassert>
 #include <chrono>
 #include <iostream>
 #include <mutex>
@@ -21,7 +21,7 @@ static void test_functional()
     {
         MemoryPool m(4);
         Task *t = m.acquire();
-        assert(t != nullptr);
+        CHECK(t != nullptr);
         t->execute();
         m.release(t);
     }
@@ -30,9 +30,9 @@ static void test_functional()
     std::cout << "[Functional] acquire on empty pool returns nullptr\n";
     {
         MemoryPool m(2);
-        assert(m.acquire() != nullptr);
-        assert(m.acquire() != nullptr);
-        assert(m.acquire() == nullptr);
+        CHECK(m.acquire() != nullptr);
+        CHECK(m.acquire() != nullptr);
+        CHECK(m.acquire() == nullptr);
     }
     std::cout << "  PASS\n";
 
@@ -40,11 +40,11 @@ static void test_functional()
     {
         MemoryPool m(1);
         Task *t1 = m.acquire();
-        assert(t1 != nullptr);
+        CHECK(t1 != nullptr);
         m.release(t1);
         Task *t2 = m.acquire();
-        assert(t2 != nullptr);
-        assert(t2 == t1);
+        CHECK(t2 != nullptr);
+        CHECK(t2 == t1);
         (void)t2;
     }
     std::cout << "  PASS\n";
@@ -59,14 +59,14 @@ static void test_functional()
         t->setFunction([&val]()
                        { val = 2; });
         t->execute();
-        assert(val == 2);
+        CHECK(val == 2);
     }
     std::cout << "  PASS\n";
 
     std::cout << "[Functional] zero capacity\n";
     {
         MemoryPool m(0);
-        assert(m.acquire() == nullptr);
+        CHECK(m.acquire() == nullptr);
     }
     std::cout << "  PASS\n";
 }
@@ -98,7 +98,7 @@ static void test_thread_safety()
     start.store(true, std::memory_order_release);
     for (auto &th : threads)
         th.join();
-    assert(pool.available() == 64);
+    CHECK(pool.available() == 64);
     std::cout << "  PASS\n";
 }
 
@@ -108,17 +108,17 @@ static void test_expand()
     {
         MemoryPool pool(1, /*expandable=*/true);
         Task *a1 = pool.acquire();
-        assert(a1 != nullptr);
+        CHECK(a1 != nullptr);
         Task *b1 = pool.acquire();
-        assert(b1 != nullptr);
+        CHECK(b1 != nullptr);
         Task *c1 = pool.acquire();
-        assert(c1 != nullptr);
-        assert(a1 != b1 && b1 != c1);
+        CHECK(c1 != nullptr);
+        CHECK(a1 != b1 && b1 != c1);
         pool.release(a1);
         pool.release(b1);
         pool.release(c1);
-        assert(pool.available() == pool.capacity());
-        assert(pool.blockCount() == 3);
+        CHECK(pool.available() == pool.capacity());
+        CHECK(pool.blockCount() == 3);
         std::cout << "  capacity= " << pool.capacity()
                   << " blocks= " << pool.blockCount() << "\n";
     }
@@ -127,8 +127,8 @@ static void test_expand()
     std::cout << "[Feature] reject mode still returns null on full\n";
     {
         MemoryPool pool(2, /*expandable=*/false);
-        assert(pool.acquire() != nullptr);
-        assert(pool.acquire() != nullptr);
+        CHECK(pool.acquire() != nullptr);
+        CHECK(pool.acquire() != nullptr);
     }
     std::cout << " PASS\n";
 }
@@ -156,7 +156,7 @@ static void test_thread_safety_expand()
     start.store(true, std::memory_order_release);
     for (auto &thread : threads)
         thread.join();
-    assert(pool.available() == pool.capacity());
+    CHECK(pool.available() == pool.capacity());
     std::cout << "    capacity=" << pool.capacity()
               << " available=" << pool.available() << "\n";
     std::cout << " PASS\n";

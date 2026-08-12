@@ -1,7 +1,7 @@
 #include "../include/LockedRingBuffer.h"
 
+#include "check.h"
 #include <atomic>
-#include <cassert>
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -43,8 +43,8 @@ int main()
         }
     }
 
-    assert(got == TOTAL);
-    assert(q.empty());
+    CHECK(got == TOTAL);
+    CHECK(q.empty());
     std::cout << "  consumed=" << got << " PASS\n";
 
     for (auto& th : threads) {

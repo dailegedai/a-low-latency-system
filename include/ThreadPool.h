@@ -7,7 +7,6 @@
 #include <mutex>
 #include <condition_variable>
 #include <vector>
-#include <queue>
 #include <future>
 #include <atomic>
 
@@ -39,8 +38,9 @@ public:
     bool isStopping() const;
 
 private:
+    size_t max_queue_size;
     std::vector<Worker> workers;
-    std::queue<Task> tasks;
+    RingBuffer<Task> tasks;
     std::condition_variable not_full_cv;
     std::atomic<uint64_t> submitted_tasks{0};
     std::atomic<uint64_t> completed_tasks{0};
@@ -48,7 +48,6 @@ private:
     std::mutex mtx;
     std::condition_variable cv;
     bool stop{false};
-    size_t max_queue_size;
     RejectPolicy reject_policy;
 };
 
@@ -78,14 +77,14 @@ auto ThreadPool::submit(F &&f, Args &&...args)
                 lock,
                 [this]
                 {
-                    return tasks.size() < max_queue_size;
+                    return !tasks.full();
                 });
             break;
         }
 
         case RejectPolicy::DISCARD:
         {
-            if (tasks.size() >= max_queue_size)
+            if (tasks.full())
             {
                 return res;
             }
@@ -94,7 +93,7 @@ auto ThreadPool::submit(F &&f, Args &&...args)
 
         case RejectPolicy::THROW:
         {
-            if (tasks.size() >= max_queue_size)
+            if (tasks.full())
             {
                 throw std::runtime_error("task queue is full.");
             }
@@ -108,7 +107,7 @@ auto ThreadPool::submit(F &&f, Args &&...args)
                 "submit on stopped ThreadPool.");
         }
 
-        tasks.emplace(
+        tasks.push(
             Task(
                 [task]() { 
                     (*task)(); 

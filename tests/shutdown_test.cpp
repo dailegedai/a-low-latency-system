@@ -1,7 +1,7 @@
 #include "../include/ThreadPool.h"
 
+#include "check.h"
 #include <iostream>
-#include <cassert>
 #include <chrono>
 
 int main()
@@ -24,7 +24,7 @@ int main()
 
         pool.shutdown();
 
-        assert(pool.isStopping());
+        CHECK(pool.isStopping());
 
         std::cout
             << "PASS\n";
@@ -76,7 +76,7 @@ int main()
 
         pool.shutdown();
 
-        assert(counter.load()==100);
+        CHECK(counter.load()==100);
 
         std::cout
             << "PASS\n";
@@ -108,7 +108,7 @@ int main()
             exceptionCaught=true;
         }
 
-        assert(exceptionCaught);
+        CHECK(exceptionCaught);
 
         std::cout
             << "PASS\n";
@@ -133,7 +133,7 @@ int main()
                 return 123;
             });
 
-        assert(
+        CHECK(
             future.get()==123
         );
 
@@ -175,7 +175,7 @@ int main()
             exceptionCaught=true;
         }
 
-        assert(exceptionCaught);
+        CHECK(exceptionCaught);
 
         pool.shutdown();
 
@@ -203,11 +203,11 @@ int main()
 
         pool.shutdown();
 
-        assert(
+        CHECK(
             pool.getSubmittedTaskCount()==100
         );
 
-        assert(
+        CHECK(
             pool.getCompletedTaskCount()==100
         );
 
@@ -228,7 +228,7 @@ int main()
 
         ThreadPool pool(8, 20);
 
-        assert(
+        CHECK(
             pool.getThreadCount()==8
         );
 
