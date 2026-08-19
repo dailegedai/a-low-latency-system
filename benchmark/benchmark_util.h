@@ -22,6 +22,12 @@ public:
         std::cout << name_ << ": " << duration.count() << "ms" << std::endl;
     }
 
+    long elapsedMs() const
+    {
+        auto end = std::chrono::steady_clock::now();
+        return std::chrono::duration_cast<std::chrono::milliseconds>(end - start_).count();;
+    }
+
 private:
     std::string name_;
     std::chrono::steady_clock::time_point start_;

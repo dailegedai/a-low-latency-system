@@ -1,7 +1,7 @@
 # MemoryPool 重构对比：`new Task()` vs Placement New
 
 > 日期：2026-08-05
-> 目标：验证 Day27 Placement New 重构对 MemoryPool 的影响
+> 目标：验证 Placement New 重构对 MemoryPool 的影响
 > 测试：`./build/memory_pool_test`（Release，-O3）
 
 ## 背景
@@ -96,15 +96,15 @@ MemoryPool::~MemoryPool() {
 ### 3. Placement New 的真实收益（本 benchmark 测不到）
 
 1. **构造阶段**：N 次 malloc → 1 次 `::operator new`，初始化开销从 O(N) 次系统调用降至 1 次。
-2. **内存布局**：对象落在连续地址空间，缓存友好（cache-friendly），为 Day29 缓存优化打基础。
-3. **职责分离**：分配（operator new）与构造（placement new）解耦，未来可支持懒构造、按需扩块（Arena，Day28）。
+2. **内存布局**：对象落在连续地址空间，缓存友好（cache-friendly），为缓存优化打基础。
+3. **职责分离**：分配（operator new）与构造（placement new）解耦，未来可支持懒构造、按需扩块（Arena）。
 4. **生命周期显式化**：`new`/`delete` 的配对变成 `placement new`/`~Task()` + `operator new`/`operator delete`，生命周期完全由 pool 掌控。
 
 ### 4. 数据噪声说明
 
 - 线程本地 8 线程 B 比 A 高 30%（404M vs 311M），但单次运行、无重复取样，且竞争/低线程场景未一致提升，**不作为收益证据**。
 - 竞争 8 线程 B 略低（31M vs 28.7M），同样在噪声范围内。
-- 严格对比需要 Day31 的重复采样（avg/min/max over multiple runs）统一基准。
+- 严格对比需要重复采样（avg/min/max over multiple runs）统一基准。
 
 ## 后续行动
 

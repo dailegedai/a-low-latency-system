@@ -73,9 +73,11 @@ set(THREADPOOL_TARGETS
     memory_pool_test
     memory_pool_benchmark
     locked_ring_buffer_test
+    cache_layout_probe
     ring_buffer_mpsc_benchmark
     latency_benchmark
     throughput_benchmark
+    false_sharing_benchmark
 )
 
 add_executable(
@@ -106,6 +108,11 @@ add_executable(
 add_executable(
     submit_benchmark
     benchmark/submit_benchmark.cpp
+)
+
+add_executable(
+    false_sharing_benchmark
+    benchmark/false_sharing_benchmark.cpp
 )
 
 add_executable(
@@ -163,6 +170,11 @@ add_executable(
 add_executable(
     locked_ring_buffer_test
     tests/locked_ring_buffer_test.cpp
+)
+
+add_executable(
+    cache_layout_probe
+    tests/cache_layout_probe.cpp
 )
 
 add_executable(

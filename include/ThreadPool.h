@@ -10,6 +10,9 @@
 #include <future>
 #include <atomic>
 
+// x86-64 L1 cache line（probe 已确认 == std::hardware_destructive_interference_size）
+static constexpr std::size_t kCacheLineSize = 64;
+
 enum class RejectPolicy
 {
     BLOCK,
@@ -42,9 +45,9 @@ private:
     std::vector<Worker> workers;
     RingBuffer<Task> tasks;
     std::condition_variable not_full_cv;
-    std::atomic<uint64_t> submitted_tasks{0};
-    std::atomic<uint64_t> completed_tasks{0};
-    std::atomic<uint64_t> busy_workers{0};
+    alignas(kCacheLineSize) std::atomic<uint64_t> submitted_tasks{0};
+    alignas(kCacheLineSize) std::atomic<uint64_t> completed_tasks{0};
+    alignas(kCacheLineSize) std::atomic<uint64_t> busy_workers{0};
     std::mutex mtx;
     std::condition_variable cv;
     bool stop{false};
