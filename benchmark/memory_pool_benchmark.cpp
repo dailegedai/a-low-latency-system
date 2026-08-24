@@ -14,7 +14,7 @@
 using Clock = std::chrono::steady_clock;
 using ns = std::chrono::nanoseconds;
 
-struct Stats
+struct LatencyStats
 {
     double min{0};
     double avg{0};
@@ -23,11 +23,11 @@ struct Stats
     double p99{0};
 };
 
-static Stats compute_stats(std::vector<double> &samples)
+static LatencyStats compute_stats(std::vector<double> &samples)
 {
     std::sort(samples.begin(), samples.end());
     size_t n = samples.size();
-    Stats s;
+    LatencyStats s;
     s.min = samples.front();
     s.max = samples.back();
     s.avg = std::accumulate(samples.begin(), samples.end(), 0.0) / n;
@@ -36,7 +36,7 @@ static Stats compute_stats(std::vector<double> &samples)
     return s;
 }
 
-static void print_stats(const char *label, const Stats &s)
+static void print_stats(const char *label, const LatencyStats &s)
 {
     std::cout << "  " << label << ":\n";
     std::cout << "    min: " << s.min << " ns\n";
@@ -102,8 +102,8 @@ static void test_latency()
         }
     }
 
-    Stats ps = compute_stats(pool_ns);
-    Stats rs = compute_stats(raw_ns);
+    LatencyStats ps = compute_stats(pool_ns);
+    LatencyStats rs = compute_stats(raw_ns);
 
     print_stats("Pool acquire", ps);
     print_stats("Raw new/delete", rs);

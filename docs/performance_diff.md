@@ -3,6 +3,7 @@
 > 日期：2026-08-09
 > 目标：替换提交路径的队列实现前后，复跑 benchmark 存档并对比
 > 前置参考： MPSC 数据（`benchmark/ring_buffer_mpsc_benchmark.cpp`）—— 相同环缓冲微观场景 std::queue ≈ 0.8x vs Ring
+> Day31 更新：本项目已引入重复采样规范（见 [`docs/benchmark_methodology.md`](benchmark_methodology.md)）。本文数据采集于规范落地前（单次/2-3 次中位数），绝对值仅供趋势参考；复测请用 `sample()` 版基准。
 
 ## 环境
 

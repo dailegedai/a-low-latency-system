@@ -68,13 +68,15 @@ static void bench_threadpool(int thread_count, long tasks)
     ThreadPool pool(thread_count, 65536);
     std::atomic<long> done{0};
 
-    Benchmark b("threadpool threads=" + std::to_string(thread_count));
-    for (long i = 0; i < tasks; ++i) {
-        pool.submit([&done]() { done.fetch_add(1, std::memory_order_relaxed); });
-    }
-    while (done.load(std::memory_order_relaxed) < tasks) {
-        std::this_thread::yield();
-    }
+    sample(("threadpool threads=" + std::to_string(thread_count)).c_str(), [&] {
+        done.store(0);
+        for (long i = 0; i < tasks; ++i) {
+            pool.submit([&done]() { done.fetch_add(1, std::memory_order_relaxed); });
+        }
+        while (done.load(std::memory_order_relaxed) < tasks) {
+            std::this_thread::yield();
+        }
+    }, /*warmup=*/1, /*repeats=*/3);
 }
 
 int main()

@@ -1,4 +1,5 @@
 #include "../include/ThreadPool.h"
+#include "benchmark_util.h"
 
 #include <atomic>
 #include <chrono>
@@ -17,13 +18,11 @@ struct Result {
 };
 
 template <typename Fn>
-static Result measure(const char *name, int task_count, Fn &&setup)
+static Result measure(const char *name, int task_count, Fn &&setup, int repeats = 3)
 {
-    auto start = Clock::now();
-    setup();
-    auto end = Clock::now();
-    auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-    return {name, us, task_count, task_count * 1000000.0 / us};
+    Stats st = sample(name, std::forward<Fn>(setup), /*warmup=*/1, repeats);
+    double median_ms = st.median_ms;
+    return {name, static_cast<int64_t>(median_ms * 1000), task_count, task_count * 1000.0 / median_ms};
 }
 
 static double compute_pi(int terms)
