@@ -29,7 +29,7 @@ int main()
     std::cout << "FIFO Test Passed. \n";
 
 
-    std::cout << "=========== Wrap Aroud TEST ===========\n";
+    std::cout << "=========== Wrap Around TEST ===========\n";
 
     RingBuffer<int> q2(4);
     q2.push(1);

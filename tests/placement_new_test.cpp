@@ -30,13 +30,14 @@ struct Widget
 static bool test_preconstruct_count()
 {
     constexpr int N = 8;
+    int before = Widget::constructed.load();
     void* raw = ::operator new(N * sizeof(Widget));
     auto* p = static_cast<Widget*>(raw);
     for (int i = 0; i < N; ++i) {
         new (p + i) Widget(i);
     }
 
-    CHECK(Widget::constructed.load() == N);
+    CHECK(Widget::constructed.load() == before + N);
 
     for (int i = 0; i < N; ++i) {
         (p + i)->~Widget();
@@ -65,6 +66,8 @@ static bool test_acquire_usable()
 static bool test_destructor_balance()
 {
     constexpr int N = 8;
+    int before_constructed = Widget::constructed.load();
+    int before_destroyed = Widget::destroyed.load();
     void* raw = ::operator new(N * sizeof(Widget));
     auto* p = static_cast<Widget*>(raw);
     for (int i = 0; i < N; ++i) {
@@ -75,6 +78,8 @@ static bool test_destructor_balance()
         (p + i)->~Widget();
     }
 
+    CHECK(Widget::constructed.load() == before_constructed + N);
+    CHECK(Widget::destroyed.load() == before_destroyed + N);
     CHECK(Widget::destroyed.load() == Widget::constructed.load());
     ::operator delete(raw);
     std::cout << " PASS (constructed==" << Widget::constructed.load()

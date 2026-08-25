@@ -63,6 +63,22 @@ static void test_functional()
     }
     std::cout << "  PASS\n";
 
+    std::cout << "[Functional] release clears stale function\n";
+    {
+        MemoryPool m(1);
+        int val = 0;
+        Task *t = m.acquire();
+        t->setFunction([&val]()
+                       { val = 7; });
+        m.release(t);
+
+        // 重新获取后未 setFunction：不应执行上一次残留的函数
+        t = m.acquire();
+        t->execute();
+        CHECK(val == 0);
+    }
+    std::cout << "  PASS\n";
+
     std::cout << "[Functional] zero capacity\n";
     {
         MemoryPool m(0);

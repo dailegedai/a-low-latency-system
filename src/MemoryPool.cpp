@@ -1,6 +1,6 @@
 #include "../include/MemoryPool.h"
 
-MemoryPool::MemoryPool(size_t capacity, bool expandable) : initial_capacity_(capacity), expandable_(expandable)
+MemoryPool::MemoryPool(size_t capacity, bool expandable) : expandable_(expandable), initial_capacity_(capacity)
 {
     free_.reserve(capacity);
     addBlock(capacity);
@@ -53,6 +53,7 @@ Task *MemoryPool::acquire()
 
 void MemoryPool::release(Task *task)
 {
+    task->reset();
     std::lock_guard<std::mutex> lock(mtx_);
     free_.push_back(task);
 }

@@ -114,12 +114,12 @@ int main()
     std::cout << "========== Lock-Free Queue Test ==========\n";
 
     std::cout << "[single-thread] FIFO + wrap-around\n";
-    CHECK(test_single_thread());
+    test_single_thread(); // 内部 CHECK 失败即 exit
     std::cout << "  PASS\n";
 
     std::cout << "[MPMC] 4 producers x 4 consumers, no loss/dup\n";
-    CHECK(test_mpmc_consistency());
-    std::cout << "  PASS (popped=" << 40000 << ")\n";
+    test_mpmc_consistency(); // 内部 CHECK 失败即 exit
+    std::cout << "  PASS\n";
 
     std::cout << "\n========== ALL TESTS PASSED ==========\n";
     return 0;

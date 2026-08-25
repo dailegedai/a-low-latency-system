@@ -2,8 +2,7 @@
 #include <chrono>
 
 ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy) 
-    : max_queue_size(queue_size),
-    tasks(queue_size),
+    : tasks(queue_size),
     stop(false),
     reject_policy(policy)
 {
@@ -37,17 +36,8 @@ ThreadPool::ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy
                     busy_workers.fetch_sub(1);
                     completed_tasks.fetch_add(1);
 
-                    // to do
-                    // try
-                    // {
-                    //     task();
-                    // }
-                    // catch (...)
-                    // {
-                    //     busy_workers.fetch_sub(1);
-                    //     completed_tasks.fetch_add(1);
-                    //     throw;
-                    // }
+                    // 无需 try/catch：用户任务异常由 std::packaged_task 内部捕获并存
+                    // 入共享状态，future.get() 时再抛出，不会逃逸到 worker 线程体。
                 }
             }
         )
@@ -70,6 +60,8 @@ void ThreadPool::shutdown()
     }
 
     cv.notify_all();
+    // 唤醒所有阻塞在 BLOCK 策略下的生产者，使其在 stop 谓词下放行退出
+    not_full_cv.notify_all();
 
     for (Worker &worker : workers) {
         worker.join();
@@ -99,7 +91,9 @@ uint64_t ThreadPool::getQueueSize()
 
 bool ThreadPool::idle() const
 {
-    return getBusyWorkerCount() == 0;
+    // 空闲 = 无 worker 在执行 且 队列为空（避免 worker 恰好执行完、队列仍有待办时的误判）
+    std::lock_guard<std::mutex> lock(mtx);
+    return busy_workers.load() == 0 && tasks.empty();
 }
 
 size_t ThreadPool::getThreadCount() const

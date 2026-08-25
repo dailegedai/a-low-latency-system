@@ -2,7 +2,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstddef>
 #include <functional>
 #include <stdint.h>
 
@@ -19,12 +18,10 @@ public:
     uint64_t id() const;
     std::chrono::steady_clock::time_point submitTime() const;
 
-    static std::size_t taskIdOffset();
-
 private:
     static std::atomic<uint64_t> next_id_;
 
-    uint64_t task_id_;
-    std::chrono::steady_clock::time_point submit_time_;
+    uint64_t task_id_{0};
+    std::chrono::steady_clock::time_point submit_time_{};
     std::function<void()> func_;
 };

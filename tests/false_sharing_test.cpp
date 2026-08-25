@@ -1,11 +1,9 @@
-#include "../include/ThreadPool.h"
-
 #include <atomic>
 #include <chrono>
 #include <iostream>
 #include <thread>
 
-// true sharing cost 200~ms
+// no false sharing: x/y 各自独立缓存行，cost ~200ms
 struct Counter {
     alignas(64)
     std::atomic<long> x{0};
@@ -13,7 +11,7 @@ struct Counter {
     std::atomic<long> y{0};
 };
 
-// false sharing cost 1000~ms
+// false sharing: x/y 共享同一缓存行，cost ~1000ms
 // struct Counter {
 //     std::atomic<long> x{0};
 //     std::atomic<long> y{0};

@@ -41,16 +41,15 @@ public:
     bool isStopping() const;
 
 private:
-    size_t max_queue_size;
     std::vector<Worker> workers;
     RingBuffer<Task> tasks;
     std::condition_variable not_full_cv;
     alignas(kCacheLineSize) std::atomic<uint64_t> submitted_tasks{0};
     alignas(kCacheLineSize) std::atomic<uint64_t> completed_tasks{0};
     alignas(kCacheLineSize) std::atomic<uint64_t> busy_workers{0};
-    std::mutex mtx;
+    mutable std::mutex mtx;
     std::condition_variable cv;
-    bool stop{false};
+    std::atomic<bool> stop{false};
     RejectPolicy reject_policy;
 };
 
@@ -80,7 +79,8 @@ auto ThreadPool::submit(F &&f, Args &&...args)
                 lock,
                 [this]
                 {
-                    return !tasks.full();
+                    // stop 时放行，使阻塞的生产者在 shutdown 后能退出（见 shutdown 的 not_full_cv.notify_all）
+                    return stop || !tasks.full();
                 });
             break;
         }

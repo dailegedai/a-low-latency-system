@@ -4,7 +4,6 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
-#include <numeric>
 #include <vector>
 #include <future>
 
@@ -12,7 +11,6 @@ using Clock = std::chrono::steady_clock;
 
 struct Result {
     std::string name;
-    int64_t elapsed_us;
     int64_t tasks;
     double throughput; // tasks/sec
 };
@@ -22,7 +20,7 @@ static Result measure(const char *name, int task_count, Fn &&setup, int repeats 
 {
     Stats st = sample(name, std::forward<Fn>(setup), /*warmup=*/1, repeats);
     double median_ms = st.median_ms;
-    return {name, static_cast<int64_t>(median_ms * 1000), task_count, task_count * 1000.0 / median_ms};
+    return {name, task_count, task_count * 1000.0 / median_ms};
 }
 
 static double compute_pi(int terms)
@@ -50,10 +48,11 @@ int main()
             std::atomic<int64_t> done{0};
             ThreadPool pool(threads, 65536);
             auto r = measure(("threads=" + std::to_string(threads)).c_str(), N, [&] {
+                done.store(0);
                 for (int i = 0; i < N; i++) {
                     pool.submit([&] { done.fetch_add(1, std::memory_order_relaxed); });
                 }
-                while (done.load(std::memory_order_relaxed) != N)
+                while (done.load(std::memory_order_relaxed) < N)
                     std::this_thread::yield();
             });
             pool.shutdown();
@@ -70,10 +69,11 @@ int main()
             std::atomic<int64_t> done{0};
             ThreadPool pool(4, qsize);
             auto r = measure(("queue=" + std::to_string(qsize)).c_str(), N, [&] {
+                done.store(0);
                 for (int i = 0; i < N; i++) {
                     pool.submit([&] { done.fetch_add(1, std::memory_order_relaxed); });
                 }
-                while (done.load(std::memory_order_relaxed) != N)
+                while (done.load(std::memory_order_relaxed) < N)
                     std::this_thread::yield();
             });
             pool.shutdown();
@@ -95,10 +95,11 @@ int main()
             std::atomic<int64_t> done{0};
             ThreadPool pool(4, 65536);
             auto r = measure(w.name, count, [&] {
+                done.store(0);
                 for (int i = 0; i < count; i++) {
                     pool.submit([&] { if (w.terms) compute_pi(w.terms); done.fetch_add(1, std::memory_order_relaxed); });
                 }
-                while (done.load(std::memory_order_relaxed) != count)
+                while (done.load(std::memory_order_relaxed) < count)
                     std::this_thread::yield();
             });
             pool.shutdown();
@@ -151,10 +152,11 @@ int main()
             ThreadPool pool(2, qsize, RejectPolicy::BLOCK);
             int count = N / 10;
             auto r = measure(("BLOCK queue=" + std::to_string(qsize)).c_str(), count, [&] {
+                done.store(0);
                 for (int i = 0; i < count; i++) {
                     pool.submit([&] { compute_pi(500); done.fetch_add(1, std::memory_order_relaxed); });
                 }
-                while (done.load(std::memory_order_relaxed) != count)
+                while (done.load(std::memory_order_relaxed) < count)
                     std::this_thread::yield();
             });
             pool.shutdown();
@@ -171,10 +173,11 @@ int main()
         std::atomic<int64_t> done{0};
         ThreadPool pool(4, 65536);
         auto r = measure("2M tasks", BIG, [&] {
+            done.store(0);
             for (int i = 0; i < BIG; i++) {
                 pool.submit([&] { done.fetch_add(1, std::memory_order_relaxed); });
             }
-            while (done.load(std::memory_order_relaxed) != BIG)
+            while (done.load(std::memory_order_relaxed) < BIG)
                 std::this_thread::yield();
         });
         pool.shutdown();

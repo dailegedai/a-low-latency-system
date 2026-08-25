@@ -75,28 +75,28 @@ static void test_latency()
         }
     }
 
-    // pool latency
+    // pool latency（acquire + release 均计入，与 raw new+delete 对照）
     {
         MemoryPool m(1024);
         for (int i = 0; i < SAMPLES; ++i)
         {
             auto start = Clock::now();
             Task *t = m.acquire();
-            auto end = Clock::now();
             m.release(t);
+            auto end = Clock::now();
             pool_ns.push_back(
                 std::chrono::duration_cast<ns>(end - start).count());
         }
     }
 
-    // raw new/delete latency
+    // raw new/delete latency（new + delete 均计入计时区间，与 Pool acquire+release 对照）
     {
         for (int i = 0; i < SAMPLES; ++i)
         {
             auto start = Clock::now();
             Task *t = new Task([]() {});
-            auto end = Clock::now();
             delete t;
+            auto end = Clock::now();
             raw_ns.push_back(
                 std::chrono::duration_cast<ns>(end - start).count());
         }
@@ -165,7 +165,6 @@ static void test_contended()
         constexpr int OPS_PER_THREAD = 500000;
 
         MemoryPool shared_pool(thread_count * 64);
-        std::mutex mtx;
         std::atomic<int> ready{0};
         std::atomic<bool> start_flag{false};
 
