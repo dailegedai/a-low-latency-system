@@ -1,8 +1,11 @@
 #include "../include/ThreadPool.h"
 
 #include "check.h"
-#include <iostream>
+#include <atomic>
 #include <chrono>
+#include <iostream>
+#include <thread>
+#include <vector>
 
 int main()
 {
@@ -234,6 +237,56 @@ int main()
 
         pool.shutdown();
 
+        std::cout
+            << "PASS\n";
+    }
+
+    /*
+    ====================================
+    Test 9
+    concurrent submit + shutdown (lifetime safety)
+    shutdown() 必须等待在途 submit 完成，避免成员销毁时仍有提交访问。
+    ====================================
+    */
+
+    {
+        std::cout
+            << "[TEST9] concurrent submit + shutdown\n";
+
+        std::atomic<bool> stop_submit{false};
+        std::atomic<int> completed{0};
+
+        {
+            ThreadPool pool(1, 2, RejectPolicy::BLOCK);
+
+            std::vector<std::thread> producers;
+            for (int t = 0; t < 8; ++t) {
+                producers.emplace_back([&] {
+                    try {
+                        while (!stop_submit.load(std::memory_order_relaxed)) {
+                            auto fut = pool.submit([&] {
+                                std::this_thread::sleep_for(std::chrono::microseconds(20));
+                                completed.fetch_add(1, std::memory_order_relaxed);
+                            });
+                            (void)fut;
+                        }
+                    } catch (const std::exception&) {
+                        // shutdown 后 submit 抛异常：预期内，生产者退出
+                    }
+                });
+            }
+
+            // 让队列填满、生产者阻塞在 not_full_cv
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            pool.shutdown();   // 必须等待所有在途 submit 完成
+            stop_submit.store(true);
+
+            for (auto& th : producers) {
+                th.join();
+            }
+        } // pool 在此析构；此时不应有在途 submit 访问成员
+
+        CHECK(completed.load() > 0);
         std::cout
             << "PASS\n";
     }

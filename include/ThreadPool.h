@@ -26,6 +26,11 @@ public:
     ThreadPool(size_t num_thread, size_t queue_size, RejectPolicy policy = RejectPolicy::BLOCK);
     ~ThreadPool();
 
+    // 生命周期契约：
+    // - submit() 可在任意线程并发调用；
+    // - shutdown() 会等待所有在途 submit() 完成后再返回（通过 active_submits 计数），
+    //   因此析构函数体内的 shutdown() 能保证成员（mtx/tasks/cv）销毁时无在途提交；
+    // - 调用方仍须保证 shutdown() 之后不再发起新的 submit()（并发调 submit 到已销毁对象属调用方缺陷）。
     template <class F, class... Args>
     auto submit(F &&f, Args &&...args)
         -> std::future<typename std::invoke_result<F, Args...>::type>;
@@ -51,12 +56,21 @@ private:
     std::condition_variable cv;
     std::atomic<bool> stop{false};
     RejectPolicy reject_policy;
+    // 在途 submit 计数：shutdown() 等待其归零，确保析构安全
+    std::atomic<uint32_t> active_submits{0};
 };
 
 template <typename F, typename... Args>
 auto ThreadPool::submit(F &&f, Args &&...args)
     -> std::future<typename std::invoke_result<F, Args...>::type>
 {
+    // RAII：标记在途提交，shutdown() 会等待本计数归零后才销毁成员
+    active_submits.fetch_add(1, std::memory_order_acq_rel);
+    struct SubmitGuard {
+        std::atomic<uint32_t>& n;
+        ~SubmitGuard() { n.fetch_sub(1, std::memory_order_acq_rel); }
+    } guard{active_submits};
+
     using return_type =
         typename std::invoke_result<F, Args...>::type;
 

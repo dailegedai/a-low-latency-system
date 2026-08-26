@@ -63,6 +63,12 @@ void ThreadPool::shutdown()
     // 唤醒所有阻塞在 BLOCK 策略下的生产者，使其在 stop 谓词下放行退出
     not_full_cv.notify_all();
 
+    // 等待所有在途 submit() 完成，避免成员（mtx/tasks/cv）析构时仍有提交在访问。
+    // 注意：不能在持有 mtx 时等待（BLOCK 生产者需 mtx 才能退出），因此先释放锁再轮询。
+    while (active_submits.load(std::memory_order_acquire) != 0) {
+        std::this_thread::yield();
+    }
+
     for (Worker &worker : workers) {
         worker.join();
     }
