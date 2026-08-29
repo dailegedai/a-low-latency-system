@@ -180,6 +180,11 @@ add_executable(
 )
 
 add_executable(
+    work_stealing_deque_test
+    tests/work_stealing_deque_test.cpp
+)
+
+add_executable(
     cache_layout_probe
     tests/cache_layout_probe.cpp
 )
