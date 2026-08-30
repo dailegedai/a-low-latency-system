@@ -230,6 +230,11 @@ add_executable(
     benchmark/lock_free_queue_benchmark.cpp
 )
 
+add_executable(
+    nextpowerof2_benchmark
+    benchmark/nextpowerof2_benchmark.cpp
+)
+
 # ==========================
 # Link ThreadPool
 # ==========================

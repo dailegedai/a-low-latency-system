@@ -1,5 +1,7 @@
 #pragma once
 
+#include "NextPowerOfTwo.h"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -12,24 +14,11 @@ template <typename T>
 class LockFreeQueue {
 public:
     explicit LockFreeQueue(size_t capacity)
-        : buffer_(roundUp(capacity)), mask_(buffer_.size() - 1)
+        : buffer_(llengine::nextPowerOfTwoChecked(capacity)), mask_(buffer_.size() - 1)
     {
         for (size_t i = 0; i < buffer_.size(); ++i) {
             buffer_[i].sequence.store(static_cast<uint64_t>(i), std::memory_order_relaxed);
         }
-    }
-
-    static size_t roundUp(size_t n)
-    {
-        if (n == 0) return 1;
-        --n;
-        n |= n >> 1;
-        n |= n >> 2;
-        n |= n >> 4;
-        n |= n >> 8;
-        n |= n >> 16;
-        n |= n >> 32;
-        return n + 1;
     }
 
     bool push(T&& item)

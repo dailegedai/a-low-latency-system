@@ -1,5 +1,7 @@
 #pragma once
 
+#include "NextPowerOfTwo.h"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +15,7 @@ template <typename T>
 class WorkStealingDeque {
 public:
     explicit WorkStealingDeque(size_t capacity)
-        : capacity_(roundUp(capacity)),
+        : capacity_(llengine::nextPowerOfTwoChecked(capacity)),
           mask_(capacity_ - 1),
           cells_(capacity_)
     {
@@ -83,9 +85,9 @@ public:
             }
             // 消费后置 round 无效（0）：仅当 round 仍是自己的旧值时才置 0（CAS 保护），
             // 避免覆盖 owner 环绕复用该槽时已写入的新 round。
-            uint64_t old_round = static_cast<uint64_t>(b) + 1;
-            cell->round.compare_exchange_weak(old_round, 0, std::memory_order_acq_rel,
-                                            std::memory_order_relaxed);
+            uint64_t expected_round = static_cast<uint64_t>(b) + 1;
+            cell->round.compare_exchange_weak(expected_round, 0, std::memory_order_acq_rel,
+                                              std::memory_order_relaxed);
             item = std::move(*p);
             delete p;
             return true;
@@ -95,17 +97,19 @@ public:
         if (!top_.compare_exchange_weak(t, t + 1,
                                         std::memory_order_acq_rel,
                                         std::memory_order_relaxed)) {
-            bottom_.store(t + 1, std::memory_order_relaxed); // thief 抢走
+            bottom_.store(t + 1, std::memory_order_relaxed); // thief 抢走，bottom 追平 top
             return false;
         }
+        // 认领成功：bottom 追平新 top，维持 bottom >= top 不变量
+        bottom_.store(t + 1, std::memory_order_relaxed);
         T* p = cell->data.exchange(nullptr, std::memory_order_acq_rel);
         if (p == nullptr) {
             return false;
         }
         {
-            uint64_t old_round = static_cast<uint64_t>(b) + 1;
-            cell->round.compare_exchange_weak(old_round, 0, std::memory_order_acq_rel,
-                                            std::memory_order_relaxed);
+            uint64_t expected_round = static_cast<uint64_t>(b) + 1;
+            cell->round.compare_exchange_weak(expected_round, 0, std::memory_order_acq_rel,
+                                              std::memory_order_relaxed);
         }
         item = std::move(*p);
         delete p;
@@ -143,9 +147,9 @@ public:
         // 消费后置 round 无效（0）：仅当 round 仍是自己的旧值时才置 0（CAS 保护），
         // 避免覆盖 owner 环绕复用该槽时已写入的新 round。
         {
-            uint64_t old_round = static_cast<uint64_t>(t) + 1;
-            cell->round.compare_exchange_weak(old_round, 0, std::memory_order_acq_rel,
-                                            std::memory_order_relaxed);
+            uint64_t expected_round = static_cast<uint64_t>(t) + 1;
+            cell->round.compare_exchange_weak(expected_round, 0, std::memory_order_acq_rel,
+                                              std::memory_order_relaxed);
         }
         item = std::move(*p);
         delete p;
@@ -165,19 +169,6 @@ public:
     bool empty() const { return size() == 0; }
 
 private:
-    static size_t roundUp(size_t n)
-    {
-        if (n == 0) return 1;
-        --n;
-        n |= n >> 1;
-        n |= n >> 2;
-        n |= n >> 4;
-        n |= n >> 8;
-        n |= n >> 16;
-        n |= n >> 32;
-        return n + 1;
-    }
-
     struct Cell {
         std::atomic<T*> data{nullptr};
         std::atomic<uint64_t> round{0};

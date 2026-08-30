@@ -1,5 +1,7 @@
 #pragma once
 
+#include "NextPowerOfTwo.h"
+
 #include <vector>
 #include <optional>
 #include <cstddef>
@@ -9,21 +11,9 @@ template<typename T>
 class RingBuffer {
 public:
     explicit RingBuffer(size_t capacity)
-        : buffer_(roundUp(capacity)), head(0), tail(0), capacity_(roundUp(capacity)), size_(0)
+        : buffer_(llengine::nextPowerOfTwoChecked(capacity)), head(0), tail(0),
+          capacity_(llengine::nextPowerOfTwoChecked(capacity)), size_(0)
     {
-    }
-
-    static size_t roundUp(size_t n)
-    {
-        if (n == 0) return 1;
-        --n;
-        n |= n >> 1;
-        n |= n >> 2;
-        n |= n >> 4;
-        n |= n >> 8;
-        n |= n >> 16;
-        n |= n >> 32;
-        return n + 1;
     }
 
     bool push(T&& item)
