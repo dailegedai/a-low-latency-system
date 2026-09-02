@@ -68,6 +68,23 @@ public:
         return true;
     }
 
+    // 近似判满（tail/head 异步快照，仅供协调使用）
+    bool full() const
+    {
+        size_t t = tail_.load(std::memory_order_acquire);
+        size_t h = head_.load(std::memory_order_acquire);
+        return static_cast<intptr_t>(t) - static_cast<intptr_t>(h) >=
+               static_cast<intptr_t>(buffer_.size());
+    }
+
+    // 近似判空（tail/head 异步快照，仅供协调使用）
+    bool empty() const
+    {
+        size_t t = tail_.load(std::memory_order_acquire);
+        size_t h = head_.load(std::memory_order_acquire);
+        return static_cast<intptr_t>(t) <= static_cast<intptr_t>(h);
+    }
+
 private:
     struct Cell {
         std::atomic<uint64_t> sequence;
