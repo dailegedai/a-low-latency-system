@@ -43,6 +43,7 @@ set(THREADPOOL_SRC
     src/ThreadPool.cpp
     src/Task.cpp
     src/Worker.cpp
+    src/WorkStealingThreadPool.cpp
 )
 
 add_library(
@@ -80,6 +81,8 @@ set(THREADPOOL_TARGETS
     false_sharing_benchmark
     lock_free_queue_test
     lock_free_queue_benchmark
+    work_stealing_threadpool_test
+    work_stealing_threadpool_benchmark
 )
 
 add_executable(
@@ -182,6 +185,26 @@ add_executable(
 add_executable(
     work_stealing_deque_test
     tests/work_stealing_deque_test.cpp
+)
+
+add_executable(
+    work_stealing_queue_test
+    tests/work_stealing_queue_test.cpp
+)
+
+add_executable(
+    light_epoch_test
+    tests/light_epoch_test.cpp
+)
+
+add_executable(
+    work_stealing_threadpool_test
+    tests/work_stealing_threadpool_test.cpp
+)
+
+add_executable(
+    work_stealing_threadpool_benchmark
+    benchmark/work_stealing_threadpool_benchmark.cpp
 )
 
 add_executable(
