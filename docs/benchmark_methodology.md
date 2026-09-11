@@ -5,15 +5,16 @@
 ## 核心原则
 
 1. **warmup 预热**：正式采样前先跑若干轮，预热缓存 / TLB / 分支预测器，避免首轮冷缓存污染数据。
-2. **重复采样**：同一测量多次运行，报告 `avg / min / max / median`。
+2. **重复采样**：同一测量多次运行，报告 `avg / min / max / median / p90 / p99`。
 3. **用 median 做结论**：均值对离群点（调度抢占、热降频、后台进程）敏感；中位数稳健。报告用 median。
+   **尾延迟看 p90/p99**：低延迟/交易语境中 tail 比 mean 更关键；p99 量化"最坏情况"。
 4. **只做会话内对比**：跨会话的绝对值会因机器热状态 / 负载漂移，只有同一次会话内的 Before/After 或不同配置之间的相对比较才有意义。
 
 ## 实现：`benchmark_util.h`
 
 ```cpp
 struct Stats {
-    double avg_ms, min_ms, max_ms, median_ms;
+    double avg_ms, min_ms, max_ms, median_ms, p90_ms, p99_ms;
 };
 
 // 预热 warmup 次，正式采样 repeats 次
@@ -21,7 +22,11 @@ template <typename Fn>
 static Stats sample(const char* label, Fn&& fn, int warmup = 1, int repeats = 5);
 ```
 
-输出形如：`label: avg=Xms min=Yms max=Zms median=Wms`。
+输出形如：`label: avg=Xms min=Yms max=Zms median=Wms p90=Ams p99=Bms`。
+
+分位数用线性插值 `index = p*(n-1)`（n=repeats）；double-ms 表示在 µs 量级仍保有
+亚微秒精度，足以刻画尾延迟。median 即 p50。对 `repeats=3/5` 的既有基准，输出与旧版
+等价的 median，向后兼容。
 
 ## 采样规模建议
 

@@ -41,6 +41,8 @@ struct Stats {
     double min_ms = 0;
     double max_ms = 0;
     double median_ms = 0;
+    double p90_ms = 0;
+    double p99_ms = 0;
 };
 
 // 预热 warmup 次，正式采样 repeats 次；fn 是"一次完整被测工作单元"
@@ -63,10 +65,22 @@ static Stats sample(const char* label, Fn&& fn, int warmup = 1, int repeats = 5)
     std::sort(times.begin(), times.end());
     double sum = std::accumulate(times.begin(), times.end(), 0.0);
 
-    Stats s{sum / repeats, times.front(), times.back(), times[times.size() / 2]};
+    // 线性插值分位数：对已排序样本，p 分位取 index = p*(n-1)（n=repeats）。
+    // double-ms 表示在 µs 量级仍保有亚微秒精度，足以刻画尾延迟。
+    auto pct = [&](double p) -> double {
+        const double idx = p * static_cast<double>(times.size() - 1);
+        const size_t lo = static_cast<size_t>(idx);
+        const size_t hi = std::min(lo + 1, times.size() - 1);
+        const double frac = idx - static_cast<double>(lo);
+        return times[lo] + frac * (times[hi] - times[lo]);
+    };
+
+    Stats s{sum / repeats, times.front(), times.back(), pct(0.5), pct(0.9), pct(0.99)};
     std::cout << label << ": avg=" << s.avg_ms << "ms"
               << " min=" << s.min_ms << "ms"
               << " max=" << s.max_ms << "ms"
-              << " median=" << s.median_ms << "ms\n";
+              << " median=" << s.median_ms << "ms"
+              << " p90=" << s.p90_ms << "ms"
+              << " p99=" << s.p99_ms << "ms\n";
     return s;
 }
