@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.10)
 
 project(ll_engine)
 
+enable_testing()
+
 # ==========================
 # C++ Standard
 # ==========================
@@ -273,5 +275,41 @@ foreach(target ${THREADPOOL_TARGETS})
         ${target}
         PRIVATE threadpool
     )
+
+endforeach()
+
+# ==========================
+# CTest Registration
+# ==========================
+
+# 每个测试可执行文件注册为独立 ctest 用例（含超时，防偶发挂起阻塞整轮）。
+# 新增测试目标时同步加入此列表；benchmark/app 不注册。
+set(LLENGINE_TEST_TARGETS
+
+    bounded_queue_test
+    reject_policy_test
+    false_sharing_test
+    metrics_test
+    task_test
+    shutdown_test
+    memory_pool_test
+    placement_new_test
+    ring_buffer_test
+    future_test
+    packaged_task_test
+    decltype_test
+    locked_ring_buffer_test
+    lock_free_queue_test
+    cache_layout_probe
+    work_stealing_deque_test
+    work_stealing_queue_test
+    light_epoch_test
+    work_stealing_threadpool_test
+)
+
+foreach(test ${LLENGINE_TEST_TARGETS})
+
+    add_test(NAME ${test} COMMAND ${test})
+    set_tests_properties(${test} PROPERTIES TIMEOUT 180)
 
 endforeach()
