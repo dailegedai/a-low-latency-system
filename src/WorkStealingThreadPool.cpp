@@ -159,6 +159,73 @@ void WorkStealingThreadPool::shutdown()
     }
 }
 
+bool WorkStealingThreadPool::enqueueTask(Task &&task)
+{
+    // 正常路径：无锁 push 到共享入口（LockFreeQueue 是 MPMC 无锁队列，
+    // 持锁串行化是不必要的——这正是本池相对 ThreadPool 消除单锁的初衷）。
+    // LockFreeQueue::push 失败时不会 move 走 task，可安全进入锁路径重试。
+    if (!stop_.load(std::memory_order_acquire) && incoming_.push(std::move(task))) {
+        submitted_tasks_.fetch_add(1, std::memory_order_relaxed);
+        if (workers_idle_.load(std::memory_order_relaxed) > 0) {
+            cv_.notify_one();
+        }
+        return true;
+    }
+
+    // 入口满 或 stop 已置位：进入策略处理（需要锁协调）
+    {
+        std::unique_lock<std::mutex> lock(mtx_);
+
+        if (stop_.load(std::memory_order_acquire)) {
+            throw std::runtime_error("submit on stopped WorkStealingThreadPool.");
+        }
+        if (policy_ == WorkStealingRejectPolicy::THROW) {
+            throw std::runtime_error("task queue is full.");
+        }
+        if (policy_ == WorkStealingRejectPolicy::DISCARD) {
+            return false; // 丢弃
+        }
+
+        // BLOCK：循环等待直到 push 成功。
+        // 注意：full() 是 tail/head 异步快照，与 push 的判定可能不一致
+        // （worker 无锁 pop 推进 head），因此不能依赖一次 wait 后必成功，
+        // push 失败须继续等待。
+        for (;;) {
+            if (incoming_.push(std::move(task))) {
+                break; // push 成功
+            }
+            waiting_producers_.fetch_add(1, std::memory_order_relaxed);
+            not_full_cv_.wait(lock, [this] {
+                return stop_.load(std::memory_order_acquire) || !incoming_.full();
+            });
+            waiting_producers_.fetch_sub(1, std::memory_order_relaxed);
+            if (stop_.load(std::memory_order_acquire)) {
+                throw std::runtime_error("submit on stopped WorkStealingThreadPool.");
+            }
+        }
+        submitted_tasks_.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (workers_idle_.load(std::memory_order_relaxed) > 0) {
+        cv_.notify_one();
+    }
+    return true;
+}
+
+bool WorkStealingThreadPool::tryEnqueueTask(Task &&task)
+{
+    if (stop_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (!incoming_.push(std::move(task))) {
+        return false; // 入口满
+    }
+    submitted_tasks_.fetch_add(1, std::memory_order_relaxed);
+    if (workers_idle_.load(std::memory_order_relaxed) > 0) {
+        cv_.notify_one();
+    }
+    return true;
+}
+
 uint64_t WorkStealingThreadPool::getSubmittedTaskCount() const
 {
     return submitted_tasks_.load();
@@ -172,6 +239,11 @@ uint64_t WorkStealingThreadPool::getCompletedTaskCount() const
 uint64_t WorkStealingThreadPool::getBusyWorkerCount() const
 {
     return busy_workers_.load();
+}
+
+uint64_t WorkStealingThreadPool::getFailedTaskCount() const
+{
+    return failed_tasks_.load();
 }
 
 size_t WorkStealingThreadPool::getQueueSize()

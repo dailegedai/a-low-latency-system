@@ -85,6 +85,8 @@ set(THREADPOOL_TARGETS
     lock_free_queue_benchmark
     work_stealing_threadpool_test
     work_stealing_threadpool_benchmark
+    no_future_submit_test
+    allocation_benchmark
 )
 
 add_executable(
@@ -215,6 +217,16 @@ add_executable(
 )
 
 add_executable(
+    no_future_submit_test
+    tests/no_future_submit_test.cpp
+)
+
+add_executable(
+    allocation_benchmark
+    benchmark/allocation_benchmark.cpp
+)
+
+add_executable(
     cache_layout_probe
     tests/cache_layout_probe.cpp
 )
@@ -305,6 +317,7 @@ set(LLENGINE_TEST_TARGETS
     work_stealing_queue_test
     light_epoch_test
     work_stealing_threadpool_test
+    no_future_submit_test
 )
 
 foreach(test ${LLENGINE_TEST_TARGETS})

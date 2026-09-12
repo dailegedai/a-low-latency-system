@@ -42,6 +42,12 @@ public:
         explicit QuiesceWindow(LightEpoch& e) noexcept : epoch_(e)
         {
             epoch_.gate_.store(true, std::memory_order_release);
+            // StoreLoad 屏障：gate 的 release store 与随后 active_ 的 acquire load
+            // 作用在不同原子上，release/acquire 本身不阻止 store→load 重排
+            // （x86 TSO 下 store 可滞留写缓冲、load 可提前）。缺此屏障时，
+            // owner 可读到 active_==0，同时 thief 读到旧 gate_==false 进入临界区，
+            // 出现"窗口内仍有 thief"的违例（ASAN 下实测可复现）。
+            std::atomic_thread_fence(std::memory_order_seq_cst);
             while (epoch_.active_.load(std::memory_order_acquire) != 0) {
                 pause_or_yield();
             }

@@ -9,10 +9,12 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // =====================================================================
@@ -56,17 +58,33 @@ public:
     auto submit(F &&f, Args &&...args)
         -> std::future<typename std::invoke_result<F, Args...>::type>;
 
+    // 无 future 的 fire-and-forget 提交：省去 packaged_task/shared_ptr 分配。
+    // 遵循池的 RejectPolicy；任务异常由 worker 侧捕获并计入 getFailedTaskCount()。
+    template <class F, class... Args>
+    void submitVoid(F &&f, Args &&...args);
+
+    // 非阻塞 fire-and-forget：入口满或已停止返回 false，不抛异常。
+    template <class F, class... Args>
+    bool trySubmit(F &&f, Args &&...args);
+
     void shutdown();
 
     uint64_t getSubmittedTaskCount() const;
     uint64_t getCompletedTaskCount() const;
     uint64_t getBusyWorkerCount() const;
+    // fire-and-forget 任务抛出的异常计数（无 future，无法向调用方传播）
+    uint64_t getFailedTaskCount() const;
     size_t getQueueSize();
     bool idle() const;
     size_t getThreadCount() const;
     bool isStopping() const;
 
 private:
+    // 入队并应用 RejectPolicy：DISCARD 满返回 false；stop / THROW 抛异常。
+    bool enqueueTask(Task &&task);
+    // 非阻塞入队：入口满或 stop 返回 false（不抛异常）。
+    bool tryEnqueueTask(Task &&task);
+
     void workerLoop(size_t me);
     void executeTask(Task& task);
     // 入口补充本地：从 incoming_ 取一批 push 进 deque[me]，返回是否取到
@@ -84,6 +102,7 @@ private:
     std::atomic<uint64_t> submitted_tasks_{0};
     std::atomic<uint64_t> completed_tasks_{0};
     std::atomic<uint64_t> busy_workers_{0};
+    std::atomic<uint64_t> failed_tasks_{0};
     mutable     std::mutex mtx_;
     std::condition_variable cv_;           // 空闲 worker 等待
     std::condition_variable not_full_cv_;  // BLOCK 生产者等待入口空间
@@ -111,57 +130,55 @@ auto WorkStealingThreadPool::submit(F &&f, Args &&...args)
 
     std::future<return_type> res = task->get_future();
 
-    // 正常路径：无锁 push 到共享入口（LockFreeQueue 是 MPMC 无锁队列，
-    // 持锁串行化是不必要的——这正是本池相对 ThreadPool 消除单锁的初衷）。
-    // 仅当入口满、需要协调（BLOCK 等待 / THROW / DISCARD）时才取锁。
-    Task t([task]() { (*task)(); });
-
-    // 无锁路径：先检查 stop（原子读），避免 shutdown 后仍提交成功
-    if (!stop_.load(std::memory_order_acquire) && incoming_.push(std::move(t))) {
-        submitted_tasks_.fetch_add(1, std::memory_order_relaxed);
-        // 有 worker 空闲则唤醒（低开销原子读判断，避免无效 notify）
-        if (workers_idle_.load(std::memory_order_relaxed) > 0) {
-            cv_.notify_one();
-        }
-        return res;
-    }
-
-    // 入口满 或 stop 已置位：进入策略处理（需要锁协调）
-    {
-        std::unique_lock<std::mutex> lock(mtx_);
-
-        if (stop_.load(std::memory_order_acquire)) {
-            throw std::runtime_error("submit on stopped WorkStealingThreadPool.");
-        }
-
-        if (policy_ == WorkStealingRejectPolicy::THROW) {
-            throw std::runtime_error("task queue is full.");
-        }
-        if (policy_ == WorkStealingRejectPolicy::DISCARD) {
-            return res; // 丢弃：future 得 broken_promise
-        }
-
-        // BLOCK：循环等待直到 push 成功。
-        // 注意：full() 是 tail/head 异步快照，与 push 的判定可能不一致
-        // （worker 无锁 pop 推进 head），因此不能依赖一次 wait 后必成功，
-        // push 失败须继续等待。
-        for (;;) {
-            if (incoming_.push(std::move(t))) {
-                break; // push 成功
-            }
-            waiting_producers_.fetch_add(1, std::memory_order_relaxed);
-            not_full_cv_.wait(lock, [this] {
-                return stop_.load(std::memory_order_acquire) || !incoming_.full();
-            });
-            waiting_producers_.fetch_sub(1, std::memory_order_relaxed);
-            if (stop_.load(std::memory_order_acquire)) {
-                throw std::runtime_error("submit on stopped WorkStealingThreadPool.");
-            }
-        }
-        submitted_tasks_.fetch_add(1, std::memory_order_relaxed);
-    }
-    if (workers_idle_.load(std::memory_order_relaxed) > 0) {
-        cv_.notify_one(); // 唤醒一个空闲 worker
-    }
+    // DISCARD 满时返回 false，忽略即可：Task 临时对象析构使 future 得 broken_promise
+    enqueueTask(Task([task]() { (*task)(); }));
     return res;
+}
+
+template <typename F, typename... Args>
+void WorkStealingThreadPool::submitVoid(F &&f, Args &&...args)
+{
+    active_submits_.fetch_add(1, std::memory_order_acq_rel);
+    struct SubmitGuard {
+        std::atomic<uint32_t>& n;
+        ~SubmitGuard() { n.fetch_sub(1, std::memory_order_acq_rel); }
+    } guard{active_submits_};
+
+    WorkStealingThreadPool* self = this;
+    auto bound = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
+
+    // 无 future：异常不能逃逸 worker，捕获并计入 failed_tasks。
+    // 任务持有 this 安全：shutdown() 让 worker 排空所有 deque/入口后才 join。
+    enqueueTask(Task([self, bound]() mutable {
+        try {
+            bound();
+        } catch (...) {
+            self->failed_tasks_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }));
+}
+
+template <typename F, typename... Args>
+bool WorkStealingThreadPool::trySubmit(F &&f, Args &&...args)
+{
+    active_submits_.fetch_add(1, std::memory_order_acq_rel);
+    struct SubmitGuard {
+        std::atomic<uint32_t>& n;
+        ~SubmitGuard() { n.fetch_sub(1, std::memory_order_acq_rel); }
+    } guard{active_submits_};
+
+    if (stop_.load(std::memory_order_acquire)) {
+        return false;
+    }
+
+    WorkStealingThreadPool* self = this;
+    auto bound = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
+
+    return tryEnqueueTask(Task([self, bound]() mutable {
+        try {
+            bound();
+        } catch (...) {
+            self->failed_tasks_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }));
 }

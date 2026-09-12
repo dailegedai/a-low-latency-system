@@ -74,6 +74,56 @@ void ThreadPool::shutdown()
     }
 }
 
+bool ThreadPool::enqueueTask(Task &&task)
+{
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+
+        switch (reject_policy)
+        {
+        case RejectPolicy::BLOCK:
+            not_full_cv.wait(lock, [this] {
+                // stop 时放行，使阻塞的生产者在 shutdown 后能退出
+                return stop || !tasks.full();
+            });
+            break;
+        case RejectPolicy::DISCARD:
+            if (tasks.full()) {
+                return false;
+            }
+            break;
+        case RejectPolicy::THROW:
+            if (tasks.full()) {
+                throw std::runtime_error("task queue is full.");
+            }
+            break;
+        }
+
+        if (stop) {
+            throw std::runtime_error("submit on stopped ThreadPool.");
+        }
+
+        tasks.push(std::move(task));
+        submitted_tasks.fetch_add(1);
+    }
+    cv.notify_one();
+    return true;
+}
+
+bool ThreadPool::tryEnqueueTask(Task &&task)
+{
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        if (stop || tasks.full()) {
+            return false;
+        }
+        tasks.push(std::move(task));
+        submitted_tasks.fetch_add(1);
+    }
+    cv.notify_one();
+    return true;
+}
+
 uint64_t ThreadPool::getSubmittedTaskCount() const
 {
     return submitted_tasks.load();
@@ -87,6 +137,11 @@ uint64_t ThreadPool::getCompletedTaskCount() const
 uint64_t ThreadPool::getBusyWorkerCount() const
 {
     return busy_workers.load();
+}
+
+uint64_t ThreadPool::getFailedTaskCount() const
+{
+    return failed_tasks.load();
 }
 
 uint64_t ThreadPool::getQueueSize()

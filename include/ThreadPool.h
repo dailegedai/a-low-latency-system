@@ -8,6 +8,8 @@
 #include <condition_variable>
 #include <vector>
 #include <future>
+#include <functional>
+#include <utility>
 #include <atomic>
 
 // x86-64 L1 cache line（probe 已确认 == std::hardware_destructive_interference_size）
@@ -35,23 +37,40 @@ public:
     auto submit(F &&f, Args &&...args)
         -> std::future<typename std::invoke_result<F, Args...>::type>;
 
+    // 无 future 的 fire-and-forget 提交：省去 packaged_task/shared_ptr 分配。
+    // 遵循池的 RejectPolicy；任务异常由 worker 侧捕获并计入 getFailedTaskCount()。
+    template <class F, class... Args>
+    void submitVoid(F &&f, Args &&...args);
+
+    // 非阻塞 fire-and-forget：队列满或已停止返回 false，不抛异常。
+    template <class F, class... Args>
+    bool trySubmit(F &&f, Args &&...args);
+
     void shutdown();
 
     uint64_t getSubmittedTaskCount() const;
     uint64_t getCompletedTaskCount() const;
     uint64_t getBusyWorkerCount() const;
+    // fire-and-forget 任务抛出的异常计数（无 future，无法向调用方传播）
+    uint64_t getFailedTaskCount() const;
     size_t getQueueSize();
     bool idle() const;
     size_t getThreadCount() const;
     bool isStopping() const;
 
 private:
+    // 入队并应用 RejectPolicy：DISCARD 满返回 false；stop / THROW 抛异常。
+    bool enqueueTask(Task &&task);
+    // 非阻塞入队：队列满或 stop 返回 false（不抛异常）。
+    bool tryEnqueueTask(Task &&task);
+
     std::vector<Worker> workers;
     RingBuffer<Task> tasks;
     std::condition_variable not_full_cv;
     alignas(kCacheLineSize) std::atomic<uint64_t> submitted_tasks{0};
     alignas(kCacheLineSize) std::atomic<uint64_t> completed_tasks{0};
     alignas(kCacheLineSize) std::atomic<uint64_t> busy_workers{0};
+    alignas(kCacheLineSize) std::atomic<uint64_t> failed_tasks{0};
     mutable std::mutex mtx;
     std::condition_variable cv;
     std::atomic<bool> stop{false};
@@ -82,57 +101,58 @@ auto ThreadPool::submit(F &&f, Args &&...args)
 
     std::future<return_type> res = task->get_future();
 
-    {
-        std::unique_lock<std::mutex> lock(mtx);
-
-        switch (reject_policy)
-        {
-        case RejectPolicy::BLOCK:
-        {
-            not_full_cv.wait(
-                lock,
-                [this]
-                {
-                    // stop 时放行，使阻塞的生产者在 shutdown 后能退出（见 shutdown 的 not_full_cv.notify_all）
-                    return stop || !tasks.full();
-                });
-            break;
-        }
-
-        case RejectPolicy::DISCARD:
-        {
-            if (tasks.full())
-            {
-                return res;
-            }
-            break;
-        }
-
-        case RejectPolicy::THROW:
-        {
-            if (tasks.full())
-            {
-                throw std::runtime_error("task queue is full.");
-            }
-            break;
-        }
-        }
-
-        if (stop)
-        {
-            throw std::runtime_error(
-                "submit on stopped ThreadPool.");
-        }
-
-        tasks.push(
-            Task(
-                [task]() { 
-                    (*task)(); 
-                }
-            )
-        );
-        submitted_tasks.fetch_add(1);              
-    }
-    cv.notify_one();
+    // DISCARD 满时返回 false，忽略即可：Task 临时对象析构释放 shared_ptr，
+    // 使 future 得到 broken_promise（与旧行为一致）。
+    enqueueTask(Task([task]() { (*task)(); }));
     return res;
+}
+
+template <typename F, typename... Args>
+void ThreadPool::submitVoid(F &&f, Args &&...args)
+{
+    // RAII：与 submit 同一生命周期契约（shutdown 等待在途提交）
+    active_submits.fetch_add(1, std::memory_order_acq_rel);
+    struct SubmitGuard {
+        std::atomic<uint32_t>& n;
+        ~SubmitGuard() { n.fetch_sub(1, std::memory_order_acq_rel); }
+    } guard{active_submits};
+
+    ThreadPool* self = this;
+    auto bound = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
+
+    // 无 future：异常不能逃逸 worker，故在包装层捕获并计入 failed_tasks。
+    // 任务持有 this 是安全的：shutdown() 会让 worker 排空队列后才 join。
+    enqueueTask(Task([self, bound]() mutable {
+        try {
+            bound();
+        } catch (...) {
+            self->failed_tasks.fetch_add(1, std::memory_order_relaxed);
+        }
+    }));
+}
+
+template <typename F, typename... Args>
+bool ThreadPool::trySubmit(F &&f, Args &&...args)
+{
+    active_submits.fetch_add(1, std::memory_order_acq_rel);
+    struct SubmitGuard {
+        std::atomic<uint32_t>& n;
+        ~SubmitGuard() { n.fetch_sub(1, std::memory_order_acq_rel); }
+    } guard{active_submits};
+
+    // 先读 stop 快速拒绝：避免停用后仍做 std::bind / 构造 Task 的分配
+    if (stop.load(std::memory_order_acquire)) {
+        return false;
+    }
+
+    ThreadPool* self = this;
+    auto bound = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
+
+    return tryEnqueueTask(Task([self, bound]() mutable {
+        try {
+            bound();
+        } catch (...) {
+            self->failed_tasks.fetch_add(1, std::memory_order_relaxed);
+        }
+    }));
 }
