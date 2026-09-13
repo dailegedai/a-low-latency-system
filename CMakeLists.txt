@@ -87,6 +87,8 @@ set(THREADPOOL_TARGETS
     work_stealing_threadpool_benchmark
     no_future_submit_test
     allocation_benchmark
+    pipeline_demo
+    task_trace_test
 )
 
 add_executable(
@@ -227,6 +229,26 @@ add_executable(
 )
 
 add_executable(
+    spsc_ring_buffer_test
+    tests/spsc_ring_buffer_test.cpp
+)
+
+add_executable(
+    task_trace_test
+    tests/task_trace_test.cpp
+)
+
+add_executable(
+    spsc_latency_benchmark
+    benchmark/spsc_latency_benchmark.cpp
+)
+
+add_executable(
+    pipeline_demo
+    app/pipeline_demo.cpp
+)
+
+add_executable(
     cache_layout_probe
     tests/cache_layout_probe.cpp
 )
@@ -318,6 +340,8 @@ set(LLENGINE_TEST_TARGETS
     light_epoch_test
     work_stealing_threadpool_test
     no_future_submit_test
+    spsc_ring_buffer_test
+    task_trace_test
 )
 
 foreach(test ${LLENGINE_TEST_TARGETS})

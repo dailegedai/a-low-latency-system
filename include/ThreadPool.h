@@ -1,5 +1,6 @@
 #pragma once
 #include "Task.h"
+#include "TaskTrace.h"
 #include "Worker.h"
 #include "RingBuffer.h"
 
@@ -9,6 +10,7 @@
 #include <vector>
 #include <future>
 #include <functional>
+#include <memory>
 #include <utility>
 #include <atomic>
 
@@ -48,6 +50,11 @@ public:
 
     void shutdown();
 
+    // 任务追踪（opt-in）：设置非空 sink 后，每个任务完成时回调一次（含失败任务）。
+    // sink 在 worker 线程执行、可能并发，必须线程安全。传空 = 关闭追踪。
+    // 关闭/开启只影响此后提交的任务；已入队任务沿用提交时的 sink。
+    void setTraceSink(llengine::TaskTraceSink sink);
+
     uint64_t getSubmittedTaskCount() const;
     uint64_t getCompletedTaskCount() const;
     uint64_t getBusyWorkerCount() const;
@@ -63,6 +70,8 @@ private:
     bool enqueueTask(Task &&task);
     // 非阻塞入队：队列满或 stop 返回 false（不抛异常）。
     bool tryEnqueueTask(Task &&task);
+    // 若已开启追踪则包裹 body（生成 id + 提交时间戳，完成后回调 sink），否则原样返回。
+    Task makeTraceableTask(std::function<void()> body);
 
     std::vector<Worker> workers;
     RingBuffer<Task> tasks;
@@ -77,6 +86,9 @@ private:
     RejectPolicy reject_policy;
     // 在途 submit 计数：shutdown() 等待其归零，确保析构安全
     std::atomic<uint32_t> active_submits{0};
+    // 任务追踪（默认关闭）：先读 bool 再原子加载 sink，默认热路径只多一次分支。
+    std::atomic<bool> trace_enabled{false};
+    std::shared_ptr<llengine::TaskTraceSink> trace_sink;
 };
 
 template <typename F, typename... Args>
@@ -103,7 +115,7 @@ auto ThreadPool::submit(F &&f, Args &&...args)
 
     // DISCARD 满时返回 false，忽略即可：Task 临时对象析构释放 shared_ptr，
     // 使 future 得到 broken_promise（与旧行为一致）。
-    enqueueTask(Task([task]() { (*task)(); }));
+    enqueueTask(makeTraceableTask([task]() { (*task)(); }));
     return res;
 }
 
@@ -122,7 +134,7 @@ void ThreadPool::submitVoid(F &&f, Args &&...args)
 
     // 无 future：异常不能逃逸 worker，故在包装层捕获并计入 failed_tasks。
     // 任务持有 this 是安全的：shutdown() 会让 worker 排空队列后才 join。
-    enqueueTask(Task([self, bound]() mutable {
+    enqueueTask(makeTraceableTask([self, bound]() mutable {
         try {
             bound();
         } catch (...) {
@@ -148,7 +160,7 @@ bool ThreadPool::trySubmit(F &&f, Args &&...args)
     ThreadPool* self = this;
     auto bound = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
 
-    return tryEnqueueTask(Task([self, bound]() mutable {
+    return tryEnqueueTask(makeTraceableTask([self, bound]() mutable {
         try {
             bound();
         } catch (...) {

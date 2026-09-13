@@ -2,6 +2,7 @@
 
 #include "LockFreeQueue.h"
 #include "Task.h"
+#include "TaskTrace.h"
 #include "Worker.h"
 #include "WorkStealingDeque.h"
 
@@ -69,6 +70,10 @@ public:
 
     void shutdown();
 
+    // 任务追踪（opt-in）：设置非空 sink 后，每个任务完成时回调一次（含失败任务）。
+    // sink 在 worker 线程执行、可能并发，必须线程安全。传空 = 关闭追踪。
+    void setTraceSink(llengine::TaskTraceSink sink);
+
     uint64_t getSubmittedTaskCount() const;
     uint64_t getCompletedTaskCount() const;
     uint64_t getBusyWorkerCount() const;
@@ -84,6 +89,8 @@ private:
     bool enqueueTask(Task &&task);
     // 非阻塞入队：入口满或 stop 返回 false（不抛异常）。
     bool tryEnqueueTask(Task &&task);
+    // 若已开启追踪则包裹 body（生成 id + 提交时间戳，完成后回调 sink），否则原样返回。
+    Task makeTraceableTask(std::function<void()> body);
 
     void workerLoop(size_t me);
     void executeTask(Task& task);
@@ -110,6 +117,9 @@ private:
     std::atomic<size_t> workers_idle_{0};  // 空闲（在 cv_ 等待）的 worker 数
     WorkStealingRejectPolicy policy_;
     size_t num_threads_;
+    // 任务追踪（默认关闭）：先读 bool 再原子加载 sink，默认热路径只多一次分支。
+    std::atomic<bool> trace_enabled_{false};
+    std::shared_ptr<llengine::TaskTraceSink> trace_sink_;
 };
 
 template <typename F, typename... Args>
@@ -131,7 +141,7 @@ auto WorkStealingThreadPool::submit(F &&f, Args &&...args)
     std::future<return_type> res = task->get_future();
 
     // DISCARD 满时返回 false，忽略即可：Task 临时对象析构使 future 得 broken_promise
-    enqueueTask(Task([task]() { (*task)(); }));
+    enqueueTask(makeTraceableTask([task]() { (*task)(); }));
     return res;
 }
 
@@ -149,7 +159,7 @@ void WorkStealingThreadPool::submitVoid(F &&f, Args &&...args)
 
     // 无 future：异常不能逃逸 worker，捕获并计入 failed_tasks。
     // 任务持有 this 安全：shutdown() 让 worker 排空所有 deque/入口后才 join。
-    enqueueTask(Task([self, bound]() mutable {
+    enqueueTask(makeTraceableTask([self, bound]() mutable {
         try {
             bound();
         } catch (...) {
@@ -174,7 +184,7 @@ bool WorkStealingThreadPool::trySubmit(F &&f, Args &&...args)
     WorkStealingThreadPool* self = this;
     auto bound = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
 
-    return tryEnqueueTask(Task([self, bound]() mutable {
+    return tryEnqueueTask(makeTraceableTask([self, bound]() mutable {
         try {
             bound();
         } catch (...) {

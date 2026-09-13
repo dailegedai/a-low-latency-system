@@ -124,6 +124,41 @@ bool ThreadPool::tryEnqueueTask(Task &&task)
     return true;
 }
 
+void ThreadPool::setTraceSink(llengine::TaskTraceSink sink)
+{
+    if (sink) {
+        // 先发布 sink，再置 enabled：submit 侧先读 enabled 再取 sink，
+        // 保证读到 enabled==true 时 sink 已可见。
+        auto sp = std::make_shared<llengine::TaskTraceSink>(std::move(sink));
+        std::atomic_store_explicit(&trace_sink, std::move(sp), std::memory_order_release);
+        trace_enabled.store(true, std::memory_order_release);
+    } else {
+        // 先关 enabled，再清 sink：避免竞态窗口内取到已释放的 sink。
+        trace_enabled.store(false, std::memory_order_release);
+        std::atomic_store_explicit(&trace_sink, std::shared_ptr<llengine::TaskTraceSink>{},
+                                   std::memory_order_release);
+    }
+}
+
+Task ThreadPool::makeTraceableTask(std::function<void()> body)
+{
+    if (!trace_enabled.load(std::memory_order_acquire)) {
+        return Task(std::move(body));
+    }
+    std::shared_ptr<llengine::TaskTraceSink> sink =
+        std::atomic_load_explicit(&trace_sink, std::memory_order_acquire);
+    if (!sink) {
+        return Task(std::move(body));
+    }
+    const uint64_t id = llengine::nextTaskId();
+    const uint64_t t0 = llengine::nowNs();
+    // 捕获 sink 的 shared_ptr 副本保证回调期间对象存活；worker 线程完成后回调一次。
+    return Task([body = std::move(body), sink, id, t0]() mutable {
+        body();
+        (*sink)(llengine::TaskTrace{id, t0, llengine::nowNs()});
+    });
+}
+
 uint64_t ThreadPool::getSubmittedTaskCount() const
 {
     return submitted_tasks.load();

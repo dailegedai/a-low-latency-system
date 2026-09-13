@@ -226,6 +226,37 @@ bool WorkStealingThreadPool::tryEnqueueTask(Task &&task)
     return true;
 }
 
+void WorkStealingThreadPool::setTraceSink(llengine::TaskTraceSink sink)
+{
+    if (sink) {
+        auto sp = std::make_shared<llengine::TaskTraceSink>(std::move(sink));
+        std::atomic_store_explicit(&trace_sink_, std::move(sp), std::memory_order_release);
+        trace_enabled_.store(true, std::memory_order_release);
+    } else {
+        trace_enabled_.store(false, std::memory_order_release);
+        std::atomic_store_explicit(&trace_sink_, std::shared_ptr<llengine::TaskTraceSink>{},
+                                   std::memory_order_release);
+    }
+}
+
+Task WorkStealingThreadPool::makeTraceableTask(std::function<void()> body)
+{
+    if (!trace_enabled_.load(std::memory_order_acquire)) {
+        return Task(std::move(body));
+    }
+    std::shared_ptr<llengine::TaskTraceSink> sink =
+        std::atomic_load_explicit(&trace_sink_, std::memory_order_acquire);
+    if (!sink) {
+        return Task(std::move(body));
+    }
+    const uint64_t id = llengine::nextTaskId();
+    const uint64_t t0 = llengine::nowNs();
+    return Task([body = std::move(body), sink, id, t0]() mutable {
+        body();
+        (*sink)(llengine::TaskTrace{id, t0, llengine::nowNs()});
+    });
+}
+
 uint64_t WorkStealingThreadPool::getSubmittedTaskCount() const
 {
     return submitted_tasks_.load();
