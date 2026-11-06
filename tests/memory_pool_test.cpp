@@ -1,6 +1,7 @@
 #include "../include/MemoryPool.h"
 
 #include "check.h"
+#include "test_util.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -109,8 +110,7 @@ static void test_thread_safety()
                 pool.release(task);
             } });
     }
-    while (ready.load() < 4)
-        std::this_thread::yield();
+    CHECK(testutil::waitUntil([&] { return ready.load() >= 4; }));
     start.store(true, std::memory_order_release);
     for (auto &th : threads)
         th.join();
@@ -167,8 +167,7 @@ static void test_thread_safety_expand()
                 pool.release(task);
             } });
     }
-    while (ready.load() < 8)
-        std::this_thread::yield();
+    CHECK(testutil::waitUntil([&] { return ready.load() >= 8; }));
     start.store(true, std::memory_order_release);
     for (auto &thread : threads)
         thread.join();

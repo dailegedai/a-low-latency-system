@@ -1,5 +1,6 @@
 #include "../include/ThreadPool.h"
 #include "check.h"
+#include "test_util.h"
 
 #include <atomic>
 #include <chrono>
@@ -49,18 +50,18 @@ static void test_block()
 static void test_block_shutdown_no_hang()
 {
     std::cout << "[BLOCK] producers blocked on full queue exit on shutdown\n";
-    ThreadPool pool(2, 4, RejectPolicy::BLOCK);
+    // 0 worker：任务只入队不消费，队列容量 4 填满后，后续 submit 必然阻塞在
+    // not_full_cv —— 无需 sleep 即可确定性地构造"生产者阻塞"现场。
+    ThreadPool pool(0, 4, RejectPolicy::BLOCK);
 
-    std::atomic<int> submitted{0};
+    std::atomic<int> attempts{0};
     std::vector<std::thread> producers;
     for (int t = 0; t < 10; ++t) {
         producers.emplace_back([&] {
             try {
                 while (true) {
-                    pool.submit([]() {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                    });
-                    submitted.fetch_add(1);
+                    attempts.fetch_add(1, std::memory_order_relaxed);
+                    pool.submit([]() {});
                 }
             } catch (const std::exception&) {
                 // shutdown 后 submit 抛异常 -> 生产者正常退出
@@ -68,14 +69,18 @@ static void test_block_shutdown_no_hang()
         });
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200)); // 让队列充满、生产者阻塞
+    // 确定性条件：队列已满(4) 且至少一个生产者发起了第 5 次提交（即被阻塞）
+    CHECK(testutil::waitUntil([&] {
+        return pool.getSubmittedTaskCount() == 4 && attempts.load() >= 5;
+    }));
+
     pool.shutdown();
     for (auto& th : producers) {
         th.join(); // 若 BLOCK 挂起未修复，此处永久阻塞
     }
 
-    CHECK(submitted.load() > 0);
-    std::cout << "  all producers joined (submitted=" << submitted.load() << ") PASS\n";
+    CHECK(attempts.load() > 0);
+    std::cout << "  all producers joined (attempts=" << attempts.load() << ") PASS\n";
 }
 
 static void test_discard()

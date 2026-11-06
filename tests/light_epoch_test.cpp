@@ -1,5 +1,6 @@
 #include "../include/LightEpoch.h"
 #include "check.h"
+#include "test_util.h"
 
 #include <atomic>
 #include <chrono>
@@ -46,9 +47,9 @@ int main()
 
     // sanitizer / 慢启动环境下线程可能尚未被调度。等至少一次临界区进入，
     // 否则主线程可能先跑完所有窗口、令 g_total_critical_entries==0 误判失败。
-    while (g_total_critical_entries.load(std::memory_order_acquire) == 0) {
-        std::this_thread::yield();
-    }
+    CHECK(testutil::waitUntil([&] {
+        return g_total_critical_entries.load(std::memory_order_acquire) > 0;
+    }));
 
     // owner：周期性进入 QuiesceWindow，断言无 thief 在临界区
     constexpr int N_WINDOWS = 2000;

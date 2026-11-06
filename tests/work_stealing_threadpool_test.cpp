@@ -1,5 +1,6 @@
 #include "../include/WorkStealingThreadPool.h"
 #include "check.h"
+#include "test_util.h"
 
 #include <atomic>
 #include <chrono>
@@ -109,7 +110,9 @@ static void test_concurrent_submit_shutdown()
             });
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        CHECK(testutil::waitUntil([&] {
+            return completed.load(std::memory_order_relaxed) > 0;
+        }));
         pool.shutdown();
         stop_submit.store(true);
         for (auto& th : producers) th.join();
@@ -129,7 +132,6 @@ static void test_block_policy()
         constexpr int N = 5000;
         for (int i = 0; i < N; ++i) {
             pool.submit([&done]() {
-                std::this_thread::sleep_for(std::chrono::microseconds(5));
                 done.fetch_add(1, std::memory_order_relaxed);
             });
         }
@@ -145,17 +147,30 @@ static void test_throw_policy()
     std::cout << "[THROW] throws when full\n";
     {
         WorkStealingThreadPool pool(1, 4, WorkStealingRejectPolicy::THROW);
+
+        // 用 Gate 占住唯一的 worker，使入口确定性地填满（不依赖任务 sleep 的时序）
+        testutil::Gate gate;
+        std::atomic<bool> started{false};
+        pool.submit([&] {
+            started.store(true, std::memory_order_release);
+            gate.wait();
+        });
+        CHECK(testutil::waitUntil([&] { return started.load(std::memory_order_acquire); }));
+
         int submitted = 0;
         try {
             for (int i = 0; i < 1000; ++i) {
-                pool.submit([]() {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                });
+                pool.submit([]() {});
                 ++submitted;
             }
         } catch (const std::exception&) {
+            // 满 -> 抛异常，符合预期
         }
+        CHECK(submitted > 0);
         CHECK(submitted < 1000);
+
+        gate.release();
+        pool.shutdown();
     }
     std::cout << "  PASS\n";
 }
@@ -168,16 +183,23 @@ static void test_discard_policy()
         WorkStealingThreadPool pool(1, 4, WorkStealingRejectPolicy::DISCARD);
         std::atomic<int> done{0};
 
-        // 填满入口（worker 在跑，入口容量 4）
+        // 同样用 Gate 占住 worker，入口容量 4 -> 后续提交确定性丢弃
+        testutil::Gate gate;
+        std::atomic<bool> started{false};
+        pool.submit([&] {
+            started.store(true, std::memory_order_release);
+            gate.wait();
+        });
+        CHECK(testutil::waitUntil([&] { return started.load(std::memory_order_acquire); }));
+
         for (int i = 0; i < 100; ++i) {
-            pool.submit([&done]() {
-                std::this_thread::sleep_for(std::chrono::microseconds(20));
-                done.fetch_add(1, std::memory_order_relaxed);
-            });
+            pool.submit([&done] { done.fetch_add(1, std::memory_order_relaxed); });
         }
+
+        gate.release();
         pool.shutdown();
 
-        CHECK(done.load() > 0);               // 至少执行了部分
+        CHECK(done.load() > 0);                    // 至少执行了部分
         CHECK(pool.getSubmittedTaskCount() < 100); // 有丢弃
     }
     std::cout << "  PASS\n";
@@ -191,14 +213,10 @@ static void test_metrics()
         WorkStealingThreadPool pool(4, 64);
         std::atomic<int> done{0};
         for (int i = 0; i < 200; ++i) {
-            pool.submit([&done]() {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                done.fetch_add(1, std::memory_order_relaxed);
-            });
+            pool.submit([&done] { done.fetch_add(1, std::memory_order_relaxed); });
         }
-        while (pool.getCompletedTaskCount() < 200) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
+        CHECK(testutil::waitUntil([&] { return pool.getCompletedTaskCount() == 200; },
+                                  std::chrono::milliseconds(10000)));
         CHECK(pool.getSubmittedTaskCount() == 200);
         CHECK(pool.getCompletedTaskCount() == 200);
         CHECK(pool.getBusyWorkerCount() == 0);

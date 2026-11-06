@@ -1,7 +1,9 @@
 #include "../include/LockedRingBuffer.h"
 
 #include "check.h"
+#include "test_util.h"
 #include <atomic>
+#include <chrono>
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -30,18 +32,18 @@ int main()
         });
     }
 
-    while (ready.load() < PRODUCERS) {
-        std::this_thread::yield();
-    }
+    CHECK(testutil::waitUntil([&] {
+        return ready.load(std::memory_order_acquire) >= PRODUCERS;
+    }));
     start.store(true, std::memory_order_release);
 
     long got = 0;
-    int x;
-    while (got < TOTAL) {
-        if (q.pop(x)) {
-            ++got;
-        }
-    }
+    int x = 0;
+    CHECK(testutil::waitUntil([&] {
+        if (got >= TOTAL) return true;
+        if (q.pop(x)) ++got;
+        return got >= TOTAL;
+    }, std::chrono::milliseconds(10000)));
 
     CHECK(got == TOTAL);
     CHECK(q.empty());

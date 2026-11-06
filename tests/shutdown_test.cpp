@@ -1,6 +1,7 @@
 #include "../include/ThreadPool.h"
 
 #include "check.h"
+#include "test_util.h"
 #include <atomic>
 #include <chrono>
 #include <iostream>
@@ -276,8 +277,11 @@ int main()
                 });
             }
 
-            // 让队列填满、生产者阻塞在 not_full_cv
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            // 确定性等到至少一个任务完成（代表生产者已在并发提交），
+            // 不再依赖"睡 2ms 应该够了"的时序假设
+            CHECK(testutil::waitUntil([&] {
+                return completed.load(std::memory_order_relaxed) > 0;
+            }));
             pool.shutdown();   // 必须等待所有在途 submit 完成
             stop_submit.store(true);
 

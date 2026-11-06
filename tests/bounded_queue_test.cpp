@@ -9,14 +9,13 @@ int main()
 {
     std::cout << "========== Bounded Queue Test ==========\n";
 
-    // 队列容量 5、2 个 worker、BLOCK 策略：提交 20 个慢任务，
+    // 队列容量 5、2 个 worker、BLOCK 策略：提交 20 个任务，
     // 验证提交在队列满时阻塞等待（而非丢弃/抛异常），且全部执行。
     ThreadPool pool(2, 5, RejectPolicy::BLOCK);
     std::atomic<int> done{0};
 
     for (int i = 0; i < 20; i++) {
         pool.submit([&done] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             done.fetch_add(1);
         });
     }

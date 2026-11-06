@@ -2,6 +2,7 @@
 #include "../include/ThreadPool.h"
 #include "../include/WorkStealingThreadPool.h"
 #include "check.h"
+#include "test_util.h"
 
 #include <atomic>
 #include <cstdint>
@@ -157,20 +158,16 @@ static void test_tp_try_submit_traced()
     pool.setTraceSink([col](const TaskTrace& t) { (*col)(t); });
 
     std::atomic<bool> started{false};
-    std::atomic<bool> release{false};
+    testutil::Gate gate;
     CHECK(pool.trySubmit([&] {
         started.store(true, std::memory_order_release);
-        while (!release.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
+        gate.wait();
     }));
-    while (!started.load(std::memory_order_acquire)) {
-        std::this_thread::yield();
-    }
+    CHECK(testutil::waitUntil([&] { return started.load(std::memory_order_acquire); }));
     CHECK(pool.trySubmit([] {}));   // 第二个成功（队列空）
     CHECK(!pool.trySubmit([] {}));  // 第三个满，拒绝
 
-    release.store(true, std::memory_order_release);
+    gate.release();
     pool.shutdown();
     CHECK(col->size() == 2); // 只有成功的两个被执行并回调
     std::cout << "  PASS\n";

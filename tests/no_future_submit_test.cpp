@@ -1,6 +1,7 @@
 #include "../include/ThreadPool.h"
 #include "../include/WorkStealingThreadPool.h"
 #include "check.h"
+#include "test_util.h"
 
 #include <atomic>
 #include <chrono>
@@ -36,7 +37,6 @@ static void tp_submit_void_block()
     constexpr int N = 5000;
     for (int i = 0; i < N; ++i) {
         pool.submitVoid([&n] {
-            std::this_thread::sleep_for(std::chrono::microseconds(2));
             n.fetch_add(1, std::memory_order_relaxed);
         });
     }
@@ -63,23 +63,19 @@ static void tp_try_submit()
 {
     std::cout << "[ThreadPool] trySubmit full/stopped\n";
     ThreadPool pool(1, 1);
+    testutil::Gate gate;
     std::atomic<bool> started{false};
-    std::atomic<bool> release{false};
 
     CHECK(pool.trySubmit([&] {
         started.store(true, std::memory_order_release);
-        while (!release.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
+        gate.wait();
     }));
-    while (!started.load(std::memory_order_acquire)) {
-        std::this_thread::yield();
-    }
+    CHECK(testutil::waitUntil([&] { return started.load(std::memory_order_acquire); }));
     // worker 忙、队列空：第 2 个进队列（容量 1），第 3 个必失败
     CHECK(pool.trySubmit([] {}));
     CHECK(!pool.trySubmit([] {}));
 
-    release.store(true, std::memory_order_release);
+    gate.release();
     pool.shutdown();
 
     CHECK(!pool.trySubmit([] {})); // shutdown 后拒绝

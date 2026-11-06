@@ -22,7 +22,6 @@ namespace llengine {
 //   - 返回 2^k      ：2^(k-1) < n <= 2^k（k >= 1）
 //   - 返回 nullopt  ：n > 2^63（结果 >= 2^64，size_t 不可表示）
 // 性能：优先硬件指令 clz（GCC/Clang 单条指令），比标准位移算法快约 1.4~2x
-//       （实测见 docs/roundup_benchmark.md / benchmark/roundup_benchmark.cpp）。
 [[nodiscard]] constexpr std::optional<size_t> nextPowerOfTwoSafe(size_t n)
 {
     constexpr size_t digits   = std::numeric_limits<size_t>::digits;  // 64

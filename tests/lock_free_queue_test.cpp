@@ -1,5 +1,6 @@
 #include "../include/LockFreeQueue.h"
 #include "check.h"
+#include "test_util.h"
 
 #include <atomic>
 #include <chrono>
@@ -95,9 +96,9 @@ static bool test_mpmc_consistency()
         });
     }
 
-    while (ready.load(std::memory_order_acquire) < PRODUCERS + CONSUMERS) {
-        std::this_thread::yield();
-    }
+    CHECK(testutil::waitUntil([&] {
+        return ready.load(std::memory_order_acquire) >= PRODUCERS + CONSUMERS;
+    }));
     start.store(true, std::memory_order_release);
 
     for (auto& th : threads) {

@@ -1,7 +1,8 @@
 #include "../include/ThreadPool.h"
 #include "check.h"
+#include "test_util.h"
 
-#include <chrono>
+#include <atomic>
 #include <iostream>
 
 int main()
@@ -10,29 +11,36 @@ int main()
 
     ThreadPool pool(4, 100);
 
+    testutil::Gate gate;
+    std::atomic<int> started{0};
+    std::atomic<int> completed{0};
+
     for (int i = 0; i < 20; ++i) {
-        pool.submit([]() {
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        pool.submitVoid([&] {
+            started.fetch_add(1, std::memory_order_relaxed);
+            gate.wait(); // 占住 worker，直到主线程放行（确定性中间态）
+            completed.fetch_add(1, std::memory_order_relaxed);
         });
     }
 
-    // 中途指标：20 个 200ms 任务由 4 workers 执行（~1s），
-    // 提交后立即检查时必处于执行中：submitted==20 且未全部完成
+    // 提交后立即检查：submitted 已确定 == 20
     CHECK(pool.getSubmittedTaskCount() == 20);
-    CHECK(pool.getCompletedTaskCount() < 20);
+
+    // 4 个 worker 各领一个任务后阻塞在 gate -> 恰有 4 个 started（确定性，无需 sleep）
+    CHECK(testutil::waitUntil([&] { return started.load() == 4; }));
+    CHECK(pool.getCompletedTaskCount() == 0);
+    CHECK(pool.getBusyWorkerCount() > 0);
     std::cout << "  mid: submitted=" << pool.getSubmittedTaskCount()
               << " completed=" << pool.getCompletedTaskCount() << " PASS\n";
 
-    while (pool.getCompletedTaskCount() < 20) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
+    gate.release();
+    CHECK(testutil::waitUntil([&] { return pool.getCompletedTaskCount() == 20; }));
 
     CHECK(pool.getSubmittedTaskCount() == 20);
     CHECK(pool.getCompletedTaskCount() == 20);
     CHECK(pool.getBusyWorkerCount() == 0);
     CHECK(pool.getQueueSize() == 0);
     CHECK(pool.idle());
-
     std::cout << "  end: submitted=" << pool.getSubmittedTaskCount()
               << " completed=" << pool.getCompletedTaskCount()
               << " queue=" << pool.getQueueSize() << " PASS\n";

@@ -1,5 +1,6 @@
 #include "../include/WorkStealingQueue.h"
 #include "check.h"
+#include "test_util.h"
 
 #include <atomic>
 #include <chrono>
@@ -138,9 +139,9 @@ static bool test_multithread_grow_steal()
         });
     }
 
-    while (ready.load(std::memory_order_acquire) < OWNERS + THIEVES) {
-        std::this_thread::yield();
-    }
+    CHECK(testutil::waitUntil([&] {
+        return ready.load(std::memory_order_acquire) >= OWNERS + THIEVES;
+    }));
     start.store(true, std::memory_order_release);
 
     for (auto& th : threads) {
@@ -236,9 +237,9 @@ static bool test_multithread_steal()
         });
     }
 
-    while (ready.load(std::memory_order_acquire) < OWNERS + THIEVES) {
-        std::this_thread::yield();
-    }
+    CHECK(testutil::waitUntil([&] {
+        return ready.load(std::memory_order_acquire) >= OWNERS + THIEVES;
+    }));
     start.store(true, std::memory_order_release);
 
     for (auto& th : threads) {
@@ -314,9 +315,9 @@ static bool test_mixed_pop_steal()
         }
     });
 
-    while (ready.load(std::memory_order_acquire) < OWNERS + 1) {
-        std::this_thread::yield();
-    }
+    CHECK(testutil::waitUntil([&] {
+        return ready.load(std::memory_order_acquire) >= OWNERS + 1;
+    }));
     start.store(true, std::memory_order_release);
 
     for (auto& th : threads) {
