@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -11,6 +12,20 @@
 
 using llengine::QueueWorker;
 using llengine::QueueStealer;
+using llengine::QueueShared;
+
+static uintptr_t cache_line_address(const void* address)
+{
+    return reinterpret_cast<uintptr_t>(address) & ~uintptr_t{63};
+}
+
+static bool test_cache_line_layout()
+{
+    QueueShared<int> shared(4);
+    CHECK(cache_line_address(&shared.top) == cache_line_address(&shared.array_));
+    CHECK(cache_line_address(&shared.top) != cache_line_address(&shared.epoch));
+    return true;
+}
 
 // 期望和：t*PER + i 对所有 (t, i) 求和
 static long expected_sum(int producers, int per_producer)
@@ -79,6 +94,26 @@ static bool test_grow_wrap_around()
         }
     }
     CHECK(wk.empty());
+    return true;
+}
+
+static bool test_steal_batch()
+{
+    QueueWorker<int> wk(8);
+    for (int i = 1; i <= 8; ++i) {
+        CHECK(wk.push(i));
+    }
+    QueueStealer<int> stealer = wk.make_stealer();
+
+    int values[8] = {};
+    CHECK(stealer.stealBatch(values, 3) == 3);
+    CHECK(values[0] == 1 && values[1] == 2 && values[2] == 3);
+
+    CHECK(stealer.stealBatch(values, 8) == 5);
+    for (int i = 0; i < 5; ++i) {
+        CHECK(values[i] == i + 4);
+    }
+    CHECK(stealer.stealBatch(values, 1) == 0);
     return true;
 }
 
@@ -334,6 +369,10 @@ int main()
 {
     std::cout << "========== Work Stealing Queue (V2) Test ==========\n";
 
+    std::cout << "[layout] epoch does not share a line with top/array\n";
+    test_cache_line_layout();
+    std::cout << "  PASS\n";
+
     std::cout << "[owner] LIFO push/pop\n";
     test_owner_lifo(); // 内部 CHECK 失败即 exit
     std::cout << "  PASS\n";
@@ -344,6 +383,10 @@ int main()
 
     std::cout << "[grow] push/pop interleave with wrap-around\n";
     test_grow_wrap_around();
+    std::cout << "  PASS\n";
+
+    std::cout << "[batch] one epoch guard for multiple steals\n";
+    test_steal_batch();
     std::cout << "  PASS\n";
 
     std::cout << "[race] last element owner-vs-thief\n";

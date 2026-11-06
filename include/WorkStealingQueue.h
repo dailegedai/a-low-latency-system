@@ -14,57 +14,7 @@
 namespace llengine {
 
 template <typename T>
-class QueueShared;   // 内部共享状态
-
-template <typename T>
 class QueueStealer;  // thief：只读 top/array
-
-template <typename T>
-class QueueWorker {  // owner：独占 push/pop/grow，持私有 bottom
-public:
-    explicit QueueWorker(size_t capacity)
-        : shared_(std::make_shared<QueueShared<T>>(capacity)), bottom_(0)
-    {
-    }
-
-    ~QueueWorker() = default;
-    QueueWorker(const QueueWorker&) = delete;
-    QueueWorker& operator=(const QueueWorker&) = delete;
-
-    QueueStealer<T> make_stealer() const;  // 返回共享同一 SharedData 的 thief 视图
-
-    // ---- owner 专用 ----
-    bool push(const T& item);  // 尾插 LIFO；满时自动 grow（Phase 3），恒返回 true
-    bool pop(T& item);         // 尾取 LIFO
-
-    size_t size() const;       // 近似（top 异步）
-    bool empty() const;
-    size_t capacity() const;   // 当前 Array 容量（grow 后翻倍）
-
-private:
-    friend class QueueStealer<T>;
-
-    void grow();               // owner：容量满时扩容
-
-    std::shared_ptr<QueueShared<T>> shared_;
-    int64_t bottom_{0};        // 普通有符号：owner 私有，非原子
-};
-
-template <typename T>
-class QueueStealer {
-public:
-    explicit QueueStealer(std::shared_ptr<QueueShared<T>> shared)
-        : shared_(std::move(shared))
-    {
-    }
-
-    // ---- thief 专用 ----
-    bool steal(T& item);  // 头取 FIFO；round 判空，不读 bottom
-    bool empty() const;   // round 判空（近似，仅供诊断）
-
-private:
-    std::shared_ptr<QueueShared<T>> shared_;
-};
 
 // =====================================================================
 // 内部共享状态
@@ -107,46 +57,121 @@ public:
 
     alignas(64) std::atomic<int64_t> top{0};   // 序号（有符号）；thief CAS / owner 读
     std::atomic<Array*> array_;                 // 当前数组（grow 会替换）
-    LightEpoch epoch;                           // per-deque quiescence gate（grow 用）
+    // active_ 在每次 steal 时都会写入；单独占一条缓存行，避免反复使
+    // owner/thief 共同读取的 top/array_ 失效。
+    alignas(64) LightEpoch epoch;               // per-deque quiescence gate（grow 用）
+};
+
+template <typename T>
+class QueueWorker {  // owner：独占 push/pop/grow，持私有 bottom
+public:
+    explicit QueueWorker(size_t capacity)
+        : shared_(std::make_shared<QueueShared<T>>(capacity)),
+          shared_plain_(shared_.get()),
+          current_(shared_plain_->array_.load(std::memory_order_relaxed)),
+          bottom_(0)
+    {
+    }
+
+    ~QueueWorker() = default;
+    QueueWorker(const QueueWorker&) = delete;
+    QueueWorker& operator=(const QueueWorker&) = delete;
+
+    QueueStealer<T> make_stealer() const;  // 返回共享同一 SharedData 的 thief 视图
+
+    // ---- owner 专用 ----
+    [[gnu::always_inline]] bool push(const T& item);  // 尾插 LIFO；满时自动 grow
+    bool pop(T& item);         // 尾取 LIFO
+
+    size_t size() const;       // 近似（top 异步）
+    bool empty() const;
+    size_t capacity() const;   // 当前 Array 容量（grow 后翻倍）
+
+private:
+    friend class QueueStealer<T>;
+
+    [[gnu::always_inline]] bool tryPushFast(const T& item);
+    [[gnu::noinline, gnu::cold]] bool pushSlow(const T& item);
+    void grow();               // owner：容量满时扩容
+
+    std::shared_ptr<QueueShared<T>> shared_;
+    QueueShared<T>* shared_plain_; // 非拥有；仅避免 hot path 反复解 shared_ptr
+    typename QueueShared<T>::Array* current_; // owner 私有；grow 时由 owner 更新
+    int64_t bottom_{0};        // 普通有符号：owner 私有，非原子
+};
+
+template <typename T>
+class QueueStealer {
+public:
+    explicit QueueStealer(std::shared_ptr<QueueShared<T>> shared)
+        : shared_(std::move(shared))
+    {
+    }
+
+    // ---- thief 专用 ----
+    bool steal(T& item);  // 头取 FIFO；round 判空，不读 bottom
+    // 在同一 epoch guard 内连续尝试最多 max 个 steal，返回实际数量。
+    size_t stealBatch(T* items, size_t max);
+    bool empty() const;   // round 判空（近似，仅供诊断）
+
+private:
+    bool stealLocked(T& item);
+
+    std::shared_ptr<QueueShared<T>> shared_;
 };
 
 
 // QueueWorker —— owner 实现
 template <typename T>
-bool QueueWorker<T>::push(const T& item)
+[[gnu::always_inline]] inline bool QueueWorker<T>::tryPushFast(const T& item)
 {
-    QueueShared<T>* s = shared_.get();
+    QueueShared<T>* s = shared_plain_;
+    typename QueueShared<T>::Array* a = current_;
+    int64_t b = bottom_;
+    int64_t t = s->top.load(std::memory_order_acquire);
 
-    for (;;) {
-        typename QueueShared<T>::Array* a = s->array_.load(std::memory_order_acquire);
-        int64_t b = bottom_;
-        int64_t t = s->top.load(std::memory_order_acquire);
-
-        if (b - t < static_cast<int64_t>(a->mask) + 1) {
-            // 有空间：写入逻辑位置 b 对应的物理槽
-            typename QueueShared<T>::Cell* cell = &a->cells[static_cast<uint64_t>(b) & a->mask];
-            // 槽位环绕复用：该物理槽上一轮数据必须已被消费方置空（pop/steal
-            // exchange 或 grow 搬移时 exchange），正常必空；此处仅防御并发 thief
-            // 恰好正在 exchange 的极短窗口（有界等待）。
-            while (cell->data.load(std::memory_order_acquire) != nullptr) {
-                std::this_thread::yield();
-            }
-            cell->data.store(new T(item), std::memory_order_release);
-            cell->round.store(static_cast<uint64_t>(b) + 1, std::memory_order_release);
-            bottom_ = b + 1; // 普通写，owner 私有
-            return true;
-        }
-
-        // 满：扩容后重试（push 恒成功，除非分配失败抛异常）
-        grow();
+    if (b - t >= static_cast<int64_t>(a->mask) + 1) {
+        return false;
     }
+
+    // 有空间：写入逻辑位置 b 对应的物理槽。
+    typename QueueShared<T>::Cell* cell =
+        &a->cells[static_cast<uint64_t>(b) & a->mask];
+    // 槽位环绕复用：该物理槽上一轮数据必须已被消费方置空（pop/steal
+    // exchange 或 grow 搬移时 exchange），正常必空；此处仅防御并发 thief
+    // 恰好正在 exchange 的极短窗口（有界等待）。
+    while (cell->data.load(std::memory_order_acquire) != nullptr) {
+        std::this_thread::yield();
+    }
+    cell->data.store(new T(item), std::memory_order_release);
+    cell->round.store(static_cast<uint64_t>(b) + 1, std::memory_order_release);
+    bottom_ = b + 1; // 普通写，owner 私有
+    return true;
+}
+
+template <typename T>
+[[gnu::noinline, gnu::cold]] bool QueueWorker<T>::pushSlow(const T& item)
+{
+    do {
+        grow();
+    } while (!tryPushFast(item));
+    return true;
+}
+
+template <typename T>
+[[gnu::always_inline]] inline bool QueueWorker<T>::push(const T& item)
+{
+    if (tryPushFast(item)) {
+        return true;
+    }
+    return pushSlow(item);
 }
 
 template <typename T>
 void QueueWorker<T>::grow()
 {
-    QueueShared<T>* s = shared_.get();
-    typename QueueShared<T>::Array* old_a = s->array_.load(std::memory_order_acquire);
+    QueueShared<T>* s = shared_plain_;
+    typename QueueShared<T>::Array* old_a = current_;
     size_t old_cap = old_a->mask + 1;
     size_t new_cap = old_cap * 2;
 
@@ -180,6 +205,7 @@ void QueueWorker<T>::grow()
 
     // 5) 发布新 Array（release store 使后续 thief 可见完整数据）
     s->array_.store(new_a, std::memory_order_release);
+    current_ = new_a;
 
     // 6) 释放旧 Array 本体：其 [t,b) 槽已 exchange 置空，<t 早空，无残留数据；
     //    不 delete 指向的 T（数据已在 new_a，由其消费方 delete，防 double-free）。
@@ -189,8 +215,8 @@ void QueueWorker<T>::grow()
 template <typename T>
 bool QueueWorker<T>::pop(T& item)
 {
-    QueueShared<T>* s = shared_.get();
-    typename QueueShared<T>::Array* a = s->array_.load(std::memory_order_acquire);
+    QueueShared<T>* s = shared_plain_;
+    typename QueueShared<T>::Array* a = current_;
 
     int64_t b = bottom_;
     if (b == 0) {
@@ -251,7 +277,7 @@ QueueStealer<T> QueueWorker<T>::make_stealer() const
 template <typename T>
 size_t QueueWorker<T>::size() const
 {
-    QueueShared<T>* s = shared_.get();
+    QueueShared<T>* s = shared_plain_;
     int64_t b = bottom_;
     int64_t t = s->top.load(std::memory_order_acquire);
     return b > t ? static_cast<size_t>(b - t) : 0;
@@ -266,9 +292,7 @@ bool QueueWorker<T>::empty() const
 template <typename T>
 size_t QueueWorker<T>::capacity() const
 {
-    QueueShared<T>* s = shared_.get();
-    typename QueueShared<T>::Array* a = s->array_.load(std::memory_order_acquire);
-    return a->mask + 1;
+    return current_->mask + 1;
 }
 
 // =====================================================================
@@ -276,12 +300,8 @@ size_t QueueWorker<T>::capacity() const
 // =====================================================================
 
 template <typename T>
-bool QueueStealer<T>::steal(T& item)
+bool QueueStealer<T>::stealLocked(T& item)
 {
-    // 进入目标 deque 的 epoch（per-deque gate）：grow 会以 QuiesceWindow 等本
-    // deque 的所有 thief 退出后再搬移旧 Array；此处保证本 steal 不被搬移打断。
-    LightEpoch::Guard epoch_guard(shared_->epoch);
-
     QueueShared<T>* s = shared_.get();
 
     int64_t t = s->top.load(std::memory_order_acquire);
@@ -313,6 +333,29 @@ bool QueueStealer<T>::steal(T& item)
     item = std::move(*p);
     delete p;
     return true;
+}
+
+template <typename T>
+bool QueueStealer<T>::steal(T& item)
+{
+    // 进入目标 deque 的 epoch（per-deque gate）：grow 会以 QuiesceWindow 等本
+    // deque 的所有 thief 退出后再搬移旧 Array；此处保证本 steal 不被搬移打断。
+    LightEpoch::Guard epoch_guard(shared_->epoch);
+    return stealLocked(item);
+}
+
+template <typename T>
+size_t QueueStealer<T>::stealBatch(T* items, size_t max)
+{
+    if (max == 0) {
+        return 0;
+    }
+    LightEpoch::Guard epoch_guard(shared_->epoch);
+    size_t count = 0;
+    while (count < max && stealLocked(items[count])) {
+        ++count;
+    }
+    return count;
 }
 
 template <typename T>
