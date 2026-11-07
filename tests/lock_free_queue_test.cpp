@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -23,6 +24,18 @@ static long expected_sum(int producers, int per_producer)
 // 单线程 FIFO 语义（单生产者单消费者下无锁队列保序）
 static bool test_single_thread()
 {
+    {
+        LockFreeQueue<int> tiny(1);
+        CHECK(tiny.push(1));
+        CHECK(tiny.push(2)); // minimum capacity is two slots
+        CHECK(!tiny.push(3));
+        int value = 0;
+        CHECK(tiny.pop(value) && value == 1);
+        CHECK(tiny.push(3));
+        CHECK(tiny.pop(value) && value == 2);
+        CHECK(tiny.pop(value) && value == 3);
+    }
+
     LockFreeQueue<int> q(4);
 
     CHECK(q.push(1));
@@ -60,6 +73,7 @@ static bool test_mpmc_consistency()
     std::atomic<bool> start{false};
     std::atomic<long> popped{0};
     std::atomic<long> sum{0};
+    auto seen = std::make_unique<std::atomic<int>[]>(TOTAL);
 
     std::vector<std::thread> threads;
 
@@ -87,6 +101,9 @@ static bool test_mpmc_consistency()
             long v;
             while (popped.load(std::memory_order_relaxed) < TOTAL) {
                 if (q.pop(v)) {
+                    CHECK(v >= 0 && v < TOTAL);
+                    seen[static_cast<size_t>(v)].fetch_add(
+                        1, std::memory_order_relaxed);
                     sum.fetch_add(v, std::memory_order_relaxed);
                     popped.fetch_add(1, std::memory_order_relaxed);
                 } else {
@@ -107,6 +124,9 @@ static bool test_mpmc_consistency()
 
     CHECK(popped.load() == TOTAL);
     CHECK(sum.load() == expected_sum(PRODUCERS, PER));
+    for (long i = 0; i < TOTAL; ++i) {
+        CHECK(seen[static_cast<size_t>(i)].load(std::memory_order_relaxed) == 1);
+    }
     return true;
 }
 

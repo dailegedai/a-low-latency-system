@@ -125,18 +125,50 @@ static void test_concurrent_submit_shutdown()
 // TEST6: BLOCK 策略 —— 队列满时阻塞等待，最终全部执行
 static void test_block_policy()
 {
-    std::cout << "[BLOCK] waits for space, all executed\n";
+    std::cout << "[BLOCK] producer blocks until space is available\n";
     {
-        WorkStealingThreadPool pool(2, 8, WorkStealingRejectPolicy::BLOCK);
+        WorkStealingThreadPool pool(1, 1, WorkStealingRejectPolicy::BLOCK);
+        testutil::Gate gate;
+        std::atomic<bool> started{false};
         std::atomic<int> done{0};
-        constexpr int N = 5000;
-        for (int i = 0; i < N; ++i) {
-            pool.submit([&done]() {
+
+        pool.submit([&] {
+            started.store(true, std::memory_order_release);
+            gate.wait();
+            done.fetch_add(1, std::memory_order_relaxed);
+        });
+        CHECK(testutil::waitUntil([&] {
+            return started.load(std::memory_order_acquire);
+        }));
+
+        pool.submit([&done] {
+            done.fetch_add(1, std::memory_order_relaxed);
+        });
+        pool.submit([&done] {
+            done.fetch_add(1, std::memory_order_relaxed);
+        });
+
+        std::atomic<bool> attempted{false};
+        std::atomic<bool> returned{false};
+        std::thread producer([&] {
+            attempted.store(true, std::memory_order_release);
+            pool.submit([&done] {
                 done.fetch_add(1, std::memory_order_relaxed);
             });
-        }
+            returned.store(true, std::memory_order_release);
+        });
+
+        CHECK(testutil::waitUntil([&] {
+            return attempted.load(std::memory_order_acquire);
+        }));
+        CHECK(!testutil::waitUntil([&] {
+            return returned.load(std::memory_order_acquire);
+        }, std::chrono::milliseconds(50)));
+
+        gate.release();
+        producer.join();
         pool.shutdown();
-        CHECK(done.load() == N);
+        CHECK(done.load() == 4);
     }
     std::cout << "  PASS\n";
 }

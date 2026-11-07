@@ -1,6 +1,8 @@
 #include <iostream>
 #include <type_traits>
 
+#include "check.h"
+
 int add (int a, int b) {
     return a + b;
 }
@@ -12,12 +14,12 @@ auto execute(F f) -> decltype(f()) {
 
 int main() {
     decltype(add(1, 2)) result = 100;
-    std::cout << result << std::endl;
+    CHECK(result == 100);
 
     auto result2 = execute([]() {
         return 123;
     });
-    std::cout << result2 << std::endl;
+    CHECK(result2 == 123);
 
     using result_type = 
             std::invoke_result_t<
@@ -26,5 +28,8 @@ int main() {
                 int
             >;
     result_type x = 999;
-    std::cout << x << std::endl;
+    CHECK(x == 999);
+
+    std::cout << "decltype/invoke_result PASS\n";
+    return 0;
 }

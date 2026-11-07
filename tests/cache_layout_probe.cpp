@@ -1,6 +1,7 @@
 #include "../include/ThreadPool.h"
 #include "../include/Task.h"
 #include "../include/RingBuffer.h"
+#include "check.h"
 
 #include <cstddef>
 #include <functional>
@@ -27,5 +28,14 @@ int main() {
     std::cout << "sizeof(ThreadPool)                   : "
               << sizeof(ThreadPool) << "\n";
 
+    // Regression invariants for the supported GCC/libstdc++ x86-64 toolchain.
+    CHECK(std::hardware_destructive_interference_size == 64);
+    CHECK(sizeof(Task) == 32);
+    CHECK(sizeof(std::function<void()>) == 32);
+    CHECK(sizeof(std::optional<Task>) == 40);
+    CHECK(sizeof(RingBuffer<Task>) == 56);
+    CHECK(sizeof(RingBuffer<Task>) < sizeof(ThreadPool));
+
+    std::cout << "cache layout invariants PASS\n";
     return 0;
 }

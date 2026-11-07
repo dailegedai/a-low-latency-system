@@ -313,12 +313,18 @@ static void report_pingpong(const char* label, PingpongResult& r, uint64_t sampl
     }
 }
 
-// flood 吞吐
-static double run_throughput(uint64_t n, int cpu_prod, int cpu_cons)
+struct ThroughputResult {
+    double mmsg_per_sec = 0.0;
+    bool fifo_valid = false;
+};
+
+// flood 吞吐，同时校验 FIFO/无丢失/无重复。
+static ThroughputResult run_throughput(uint64_t n, int cpu_prod, int cpu_cons)
 {
     SPSCRingBuffer<uint64_t> q(65536);
     std::atomic<bool> start{false};
     std::atomic<bool> done{false};
+    std::atomic<bool> fifo_valid{true};
 
     std::thread consumer([&] {
         if (cpu_cons >= 0) {
@@ -328,9 +334,18 @@ static double run_throughput(uint64_t n, int cpu_prod, int cpu_cons)
             spin_pause();
         }
         uint64_t got = 0;
+        uint64_t expected = 0;
         uint64_t buf[256];
         while (got < n) {
-            const size_t k = q.tryPopBatch(buf, 256);
+            const size_t limit =
+                std::min<size_t>(256, static_cast<size_t>(n - got));
+            const size_t k = q.tryPopBatch(buf, limit);
+            for (size_t i = 0; i < k; ++i) {
+                if (buf[i] != expected) {
+                    fifo_valid.store(false, std::memory_order_relaxed);
+                }
+                ++expected;
+            }
             got += k;
             if (k == 0) {
                 spin_pause();
@@ -358,7 +373,10 @@ static double run_throughput(uint64_t n, int cpu_prod, int cpu_cons)
     consumer.join();
 
     const double sec = std::chrono::duration<double>(t1 - t0).count();
-    return static_cast<double>(n) / sec / 1e6;
+    return {
+        static_cast<double>(n) / sec / 1e6,
+        fifo_valid.load(std::memory_order_relaxed)
+    };
 }
 
 int main(int argc, char** argv)
@@ -393,9 +411,11 @@ int main(int argc, char** argv)
     }
 
     // 3) flood 吞吐
-    const double mmsg = run_throughput(n, cpu_a, cpu_b);
+    const ThroughputResult throughput = run_throughput(n, cpu_a, cpu_b);
     std::printf("\n--- throughput (flood) ---\n");
-    std::printf("messages=%llu, %.2f M msg/s\n", (unsigned long long)n, mmsg);
+    std::printf("messages=%llu, %.2f M msg/s, fifo=%s\n",
+                (unsigned long long)n, throughput.mmsg_per_sec,
+                throughput.fifo_valid ? "OK" : "FAIL");
 
-    return 0;
+    return throughput.fifo_valid ? 0 : 1;
 }

@@ -107,6 +107,7 @@ static void test_thread_safety()
                 std::this_thread::yield();
             for (int i = 0; i < 10000; ++i) {
                 Task* task = pool.acquire();
+                CHECK(task != nullptr);
                 pool.release(task);
             } });
     }
@@ -145,6 +146,7 @@ static void test_expand()
         MemoryPool pool(2, /*expandable=*/false);
         CHECK(pool.acquire() != nullptr);
         CHECK(pool.acquire() != nullptr);
+        CHECK(pool.acquire() == nullptr);
     }
     std::cout << " PASS\n";
 }
@@ -153,6 +155,18 @@ static void test_thread_safety_expand()
 {
     std::cout << "\n[ThreadSafety] concurrent acquire/release with expand\n";
     MemoryPool pool(4, /*expandable=*/true);
+
+    std::vector<Task*> held;
+    for (int i = 0; i < 5; ++i) {
+        Task* task = pool.acquire();
+        CHECK(task != nullptr);
+        held.push_back(task);
+    }
+    CHECK(pool.capacity() > 4);
+    for (Task* task : held) {
+        pool.release(task);
+    }
+
     std::atomic<int> ready{0};
     std::atomic<bool> start{false};
     std::vector<std::thread> threads;
@@ -162,15 +176,23 @@ static void test_thread_safety_expand()
                              {
             ready.fetch_add(1, std::memory_order_release);
             while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
-            for (int i = 0; i < 2000; ++i) {
-                Task* task = pool.acquire();
-                pool.release(task);
+            for (int i = 0; i < 200; ++i) {
+                std::vector<Task*> local;
+                for (int j = 0; j < 8; ++j) {
+                    Task* task = pool.acquire();
+                    CHECK(task != nullptr);
+                    local.push_back(task);
+                }
+                for (Task* task : local) {
+                    pool.release(task);
+                }
             } });
     }
     CHECK(testutil::waitUntil([&] { return ready.load() >= 8; }));
     start.store(true, std::memory_order_release);
     for (auto &thread : threads)
         thread.join();
+    CHECK(pool.capacity() > 4);
     CHECK(pool.available() == pool.capacity());
     std::cout << "    capacity=" << pool.capacity()
               << " available=" << pool.available() << "\n";

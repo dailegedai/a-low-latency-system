@@ -1,30 +1,58 @@
 #include "../include/ThreadPool.h"
 #include "check.h"
+#include "test_util.h"
 
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <thread>
 
 int main()
 {
     std::cout << "========== Bounded Queue Test ==========\n";
 
-    // 队列容量 5、2 个 worker、BLOCK 策略：提交 20 个任务，
-    // 验证提交在队列满时阻塞等待（而非丢弃/抛异常），且全部执行。
-    ThreadPool pool(2, 5, RejectPolicy::BLOCK);
+    // 一个 worker 被 Gate 占住，队列容量 1：第三个提交必须阻塞。
+    ThreadPool pool(1, 1, RejectPolicy::BLOCK);
+    testutil::Gate gate;
+    std::atomic<bool> started{false};
     std::atomic<int> done{0};
 
-    for (int i = 0; i < 20; i++) {
-        pool.submit([&done] {
-            done.fetch_add(1);
-        });
-    }
+    pool.submit([&] {
+        started.store(true, std::memory_order_release);
+        gate.wait();
+        done.fetch_add(1, std::memory_order_relaxed);
+    });
+    CHECK(testutil::waitUntil([&] {
+        return started.load(std::memory_order_acquire);
+    }));
+
+    // 第二个任务进入容量为 1 的队列。
+    pool.submit([&done] { done.fetch_add(1, std::memory_order_relaxed); });
+
+    std::atomic<bool> producer_attempted{false};
+    std::atomic<bool> producer_returned{false};
+    std::thread producer([&] {
+        producer_attempted.store(true, std::memory_order_release);
+        pool.submit([&done] { done.fetch_add(1, std::memory_order_relaxed); });
+        producer_returned.store(true, std::memory_order_release);
+    });
+
+    CHECK(testutil::waitUntil([&] {
+        return producer_attempted.load(std::memory_order_acquire);
+    }));
+    // Negative wait: while the only worker is gated, submit must not return.
+    CHECK(!testutil::waitUntil([&] {
+        return producer_returned.load(std::memory_order_acquire);
+    }, std::chrono::milliseconds(50)));
+
+    gate.release();
+    producer.join();
 
     pool.shutdown();
 
-    CHECK(done.load() == 20);
-    CHECK(pool.getSubmittedTaskCount() == 20);
-    CHECK(pool.getCompletedTaskCount() == 20);
+    CHECK(done.load() == 3);
+    CHECK(pool.getSubmittedTaskCount() == 3);
+    CHECK(pool.getCompletedTaskCount() == 3);
 
     std::cout << "  submitted=" << pool.getSubmittedTaskCount()
               << " completed=" << pool.getCompletedTaskCount() << " PASS\n";

@@ -6,8 +6,10 @@
 #include <cassert>
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <numeric>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -120,36 +122,40 @@ static void test_throughput()
 {
     std::cout << "\n---------- Throughput (single-thread) ----------\n";
 
-    constexpr int OPS = 5000000;
+    constexpr int OPS = 1000000;
 
-    // pool
-    {
-        MemoryPool m(1024);
-        auto start = Clock::now();
-        for (int i = 0; i < OPS; ++i)
-        {
-            Task *t = m.acquire();
-            m.release(t);
-        }
-        auto end = Clock::now();
-        double sec = std::chrono::duration<double>(end - start).count();
-        std::cout << "  Pool: " << static_cast<long>(OPS / sec)
-                  << " ops/sec\n";
-    }
+    Stats pool_stats = sample_with_setup(
+        "Pool acquire+release",
+        [] { return std::make_unique<MemoryPool>(1024); },
+        [](std::unique_ptr<MemoryPool>& pool) {
+            for (int i = 0; i < OPS; ++i) {
+                Task* task = pool->acquire();
+                if (!task) {
+                    throw std::runtime_error("pool unexpectedly exhausted");
+                }
+                pool->release(task);
+            }
+        },
+        1,
+        3);
 
-    // raw
-    {
-        auto start = Clock::now();
-        for (int i = 0; i < OPS; ++i)
-        {
-            Task *t = new Task([]() {});
-            delete t;
-        }
-        auto end = Clock::now();
-        double sec = std::chrono::duration<double>(end - start).count();
-        std::cout << "  Raw:  " << static_cast<long>(OPS / sec)
-                  << " ops/sec\n";
-    }
+    Stats raw_stats = sample(
+        "Raw new/delete",
+        [&] {
+            for (int i = 0; i < OPS; ++i) {
+                Task* task = new Task([] {});
+                delete task;
+            }
+        },
+        1,
+        3);
+
+    std::cout << "  Pool throughput: "
+              << static_cast<long>(OPS * 1000.0 / pool_stats.median_ms)
+              << " ops/sec\n";
+    std::cout << "  Raw  throughput: "
+              << static_cast<long>(OPS * 1000.0 / raw_stats.median_ms)
+              << " ops/sec\n";
 }
 
 /* =====================================================================
@@ -269,30 +275,46 @@ static void test_thread_local()
 static void bench_grow_policy()
 {
     std::cout << "\n---------- Grow policy: Reject vs Expand ----------\n";
-    constexpr int OPS = 2000000;
+    constexpr int OPS = 65536;
 
     {
         MemoryPool pool(OPS, false);
+        std::vector<Task*> held;
+        held.reserve(OPS);
         auto start = Clock::now();
         for (int i = 0; i < OPS; ++i) {
             Task* t = pool.acquire();
-            pool.release(t);
+            if (!t) {
+                throw std::runtime_error("reject pool unexpectedly exhausted");
+            }
+            held.push_back(t);
+        }
+        for (Task* task : held) {
+            pool.release(task);
         }
         auto end = Clock::now();
-        std::cout << "  Reject   : " << static_cast<long>(OPS / std::chrono::duration<double>(end - start).count())
-                  << " ops/sec\n";
+        std::cout << "  Reject   : " << static_cast<long>(2.0 * OPS / std::chrono::duration<double>(end - start).count())
+                  << " ops/sec (capacity=" << pool.capacity() << ")\n";
     }
 
     {
         MemoryPool pool(1, true);
+        std::vector<Task*> held;
+        held.reserve(OPS);
         auto start = Clock::now();
         for (int i = 0; i < OPS; ++i) {
             Task* t = pool.acquire();
-            pool.release(t);
+            if (!t) {
+                throw std::runtime_error("expand pool returned nullptr");
+            }
+            held.push_back(t);
+        }
+        for (Task* task : held) {
+            pool.release(task);
         }
         auto end = Clock::now();
-        std::cout << "  Expand   : " << static_cast<long>(OPS / std::chrono::duration<double>(end - start).count())
-                  << " ops/sec\n";
+        std::cout << "  Expand   : " << static_cast<long>(2.0 * OPS / std::chrono::duration<double>(end - start).count())
+                  << " ops/sec (capacity=" << pool.capacity() << ")\n";
     }
 }
 

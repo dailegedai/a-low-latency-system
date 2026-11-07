@@ -2,6 +2,7 @@
 
 #include "NextPowerOfTwo.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -14,7 +15,12 @@ template <typename T>
 class LockFreeQueue {
 public:
     explicit LockFreeQueue(size_t capacity)
-        : buffer_(llengine::nextPowerOfTwoChecked(capacity)), mask_(buffer_.size() - 1)
+        // The Vyukov sequence scheme needs distinct full/free states; a
+        // one-slot ring aliases the next producer position with the current
+        // consumer position, so use two slots as the minimum.
+        : buffer_(llengine::nextPowerOfTwoChecked(
+              std::max<size_t>(capacity, 2))),
+          mask_(buffer_.size() - 1)
     {
         for (size_t i = 0; i < buffer_.size(); ++i) {
             buffer_[i].sequence.store(static_cast<uint64_t>(i), std::memory_order_relaxed);

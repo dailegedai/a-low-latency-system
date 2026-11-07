@@ -155,7 +155,11 @@ Task ThreadPool::makeTraceableTask(std::function<void()> body)
     // 捕获 sink 的 shared_ptr 副本保证回调期间对象存活；worker 线程完成后回调一次。
     return Task([body = std::move(body), sink, id, t0]() mutable {
         body();
-        (*sink)(llengine::TaskTrace{id, t0, llengine::nowNs()});
+        try {
+            (*sink)(llengine::TaskTrace{id, t0, llengine::nowNs()});
+        } catch (...) {
+            // 诊断回调不得终止 worker；sink 仍应尽量 noexcept。
+        }
     });
 }
 

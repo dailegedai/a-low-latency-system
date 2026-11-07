@@ -97,6 +97,7 @@ static bool test_multithread_steal()
     std::atomic<bool> start{false};
     std::atomic<long> popped{0};
     std::atomic<long> sum{0};
+    auto seen = std::make_unique<std::atomic<int>[]>(TOTAL);
 
     std::vector<std::thread> threads;
 
@@ -125,6 +126,9 @@ static bool test_multithread_steal()
             while (popped.load(std::memory_order_relaxed) < TOTAL) {
                 for (size_t d = 0; d < deques.size(); ++d) {
                     if (deques[d]->steal(v)) {
+                        CHECK(v >= 0 && v < TOTAL);
+                        seen[static_cast<size_t>(v)].fetch_add(
+                            1, std::memory_order_relaxed);
                         sum.fetch_add(v, std::memory_order_relaxed);
                         popped.fetch_add(1, std::memory_order_relaxed);
                         break;
@@ -146,6 +150,9 @@ static bool test_multithread_steal()
 
     CHECK(popped.load() == TOTAL);
     CHECK(sum.load() == expected_sum(OWNERS, PER));
+    for (long i = 0; i < TOTAL; ++i) {
+        CHECK(seen[static_cast<size_t>(i)].load(std::memory_order_relaxed) == 1);
+    }
     return true;
 }
 
@@ -165,6 +172,7 @@ static bool test_mixed_pop_steal()
     std::atomic<bool> start{false};
     std::atomic<long> popped{0};
     std::atomic<long> sum{0};
+    auto seen = std::make_unique<std::atomic<int>[]>(TOTAL);
 
     std::vector<std::thread> threads;
 
@@ -184,6 +192,9 @@ static bool test_mixed_pop_steal()
             long x;
             for (int i = 0; i < PER / 2; ++i) {
                 if (deques[t]->pop(x)) {
+                    CHECK(x >= 0 && x < TOTAL);
+                    seen[static_cast<size_t>(x)].fetch_add(
+                        1, std::memory_order_relaxed);
                     sum.fetch_add(x, std::memory_order_relaxed);
                     popped.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -200,6 +211,9 @@ static bool test_mixed_pop_steal()
         while (popped.load(std::memory_order_relaxed) < TOTAL) {
             for (size_t d = 0; d < deques.size(); ++d) {
                 if (deques[d]->steal(v)) {
+                    CHECK(v >= 0 && v < TOTAL);
+                    seen[static_cast<size_t>(v)].fetch_add(
+                        1, std::memory_order_relaxed);
                     sum.fetch_add(v, std::memory_order_relaxed);
                     popped.fetch_add(1, std::memory_order_relaxed);
                     break;
@@ -221,6 +235,9 @@ static bool test_mixed_pop_steal()
 
     CHECK(popped.load() == TOTAL);
     CHECK(sum.load() == expected_sum(OWNERS, PER));
+    for (long i = 0; i < TOTAL; ++i) {
+        CHECK(seen[static_cast<size_t>(i)].load(std::memory_order_relaxed) == 1);
+    }
     return true;
 }
 

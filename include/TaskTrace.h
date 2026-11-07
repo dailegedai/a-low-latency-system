@@ -29,7 +29,8 @@ struct TaskTrace {
     uint64_t complete_ns = 0; // 完成时间戳（任务体执行返回后）
 };
 
-// 完成回调。会在 worker 线程执行，可能并发调用。
+// 完成回调。会在 worker 线程执行，可能并发调用；sink 抛出的异常会被丢弃，
+// 不允许诊断代码终止 worker。
 using TaskTraceSink = std::function<void(const TaskTrace&)>;
 
 } // namespace llengine

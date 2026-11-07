@@ -32,11 +32,35 @@ static double compute_pi(int terms)
     return sum * 4.0;
 }
 
-int main()
+int main(int argc, char** argv)
 {
-    constexpr int N = 500000;
+    bool full = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--full") {
+            full = true;
+        } else if (arg == "--quick") {
+            full = false;
+        } else if (arg == "--help") {
+            std::cout << "usage: " << argv[0] << " [--quick|--full]\n";
+            return 0;
+        } else {
+            std::cerr << "unknown argument: " << arg << "\n";
+            return 2;
+        }
+    }
 
-    std::cout << "=== Throughput Benchmark Suite ===\n\n";
+    const int N = full ? 500000 : 50000;
+    const int repeats = full ? 3 : 2;
+    const std::vector<int> thread_counts =
+        full ? std::vector<int>{1, 2, 4, 8}
+             : std::vector<int>{1, 4};
+    const std::vector<int> queue_sizes =
+        full ? std::vector<int>{4, 16, 64, 256, 1024, 65536}
+             : std::vector<int>{4, 1024, 65536};
+
+    std::cout << "=== Throughput Benchmark Suite (" << (full ? "full" : "quick")
+              << ") ===\n\n";
     std::cout << "each test submits " << N << " tasks unless noted\n\n";
 
     std::vector<Result> results;
@@ -44,7 +68,7 @@ int main()
     // 1. Baseline throughput vs thread count
     {
         std::cout << "--- throughput vs thread count (empty tasks) ---\n";
-        for (auto threads : {1, 2, 4, 8}) {
+        for (int threads : thread_counts) {
             std::atomic<int64_t> done{0};
             ThreadPool pool(threads, 65536);
             auto r = measure(("threads=" + std::to_string(threads)).c_str(), N, [&] {
@@ -54,7 +78,7 @@ int main()
                 }
                 while (done.load(std::memory_order_relaxed) < N)
                     std::this_thread::yield();
-            });
+            }, repeats);
             pool.shutdown();
             results.push_back(r);
             std::cout << "  " << r.name << ": " << r.throughput << " tasks/sec\n";
@@ -65,7 +89,7 @@ int main()
     // 2. Throughput vs queue size
     {
         std::cout << "--- throughput vs queue size (4 threads, empty tasks) ---\n";
-        for (auto qsize : {4, 16, 64, 256, 1024, 65536}) {
+        for (int qsize : queue_sizes) {
             std::atomic<int64_t> done{0};
             ThreadPool pool(4, qsize);
             auto r = measure(("queue=" + std::to_string(qsize)).c_str(), N, [&] {
@@ -75,7 +99,7 @@ int main()
                 }
                 while (done.load(std::memory_order_relaxed) < N)
                     std::this_thread::yield();
-            });
+            }, repeats);
             pool.shutdown();
             results.push_back(r);
             std::cout << "  " << r.name << ": " << r.throughput << " tasks/sec\n";
@@ -90,7 +114,12 @@ int main()
             const char *name;
             int terms;
         };
-        for (auto w : {Work{"empty", 0}, Work{"pi(10)", 10}, Work{"pi(100)", 100}, Work{"pi(1000)", 1000}}) {
+        const std::vector<Work> works =
+            full ? std::vector<Work>{
+                       {"empty", 0}, {"pi(10)", 10},
+                       {"pi(100)", 100}, {"pi(1000)", 1000}}
+                 : std::vector<Work>{{"empty", 0}, {"pi(100)", 100}};
+        for (const auto& w : works) {
             int count = (w.terms == 0) ? N : N / 10;
             std::atomic<int64_t> done{0};
             ThreadPool pool(4, 65536);
@@ -101,7 +130,7 @@ int main()
                 }
                 while (done.load(std::memory_order_relaxed) < count)
                     std::this_thread::yield();
-            });
+            }, repeats);
             pool.shutdown();
             results.push_back(r);
             std::cout << "  " << r.name << ": " << r.throughput << " tasks/sec\n";
@@ -121,7 +150,7 @@ int main()
                     futs.push_back(pool.submit([] {}));
                 for (auto &f : futs)
                     f.get();
-            });
+            }, repeats);
             pool.shutdown();
             results.push_back(r);
             std::cout << "  " << r.name << ": " << r.throughput << " tasks/sec\n";
@@ -136,7 +165,7 @@ int main()
                 volatile int sum = 0;
                 for (auto &f : futs)
                     sum += f.get();
-            });
+            }, repeats);
             pool.shutdown();
             results.push_back(r);
             std::cout << "  " << r.name << ": " << r.throughput << " tasks/sec\n";
@@ -147,7 +176,7 @@ int main()
     // 5. Throughput under queue full (BLOCK policy)
     {
         std::cout << "--- throughput under queue full (BLOCK, 2 threads) ---\n";
-        for (auto qsize : {4, 1024}) {
+        for (int qsize : {4, 1024}) {
             std::atomic<int64_t> done{0};
             ThreadPool pool(2, qsize, RejectPolicy::BLOCK);
             int count = N / 10;
@@ -158,7 +187,7 @@ int main()
                 }
                 while (done.load(std::memory_order_relaxed) < count)
                     std::this_thread::yield();
-            });
+            }, repeats);
             pool.shutdown();
             results.push_back(r);
             std::cout << "  " << r.name << ": " << r.throughput << " tasks/sec\n";
@@ -169,17 +198,18 @@ int main()
     // 6. Sustained throughput (larger batch)
     {
         std::cout << "--- sustained throughput (4 threads, queue=65536, empty tasks) ---\n";
-        constexpr int BIG = 2000000;
+        const int BIG = full ? 2000000 : 200000;
         std::atomic<int64_t> done{0};
         ThreadPool pool(4, 65536);
-        auto r = measure("2M tasks", BIG, [&] {
+        const std::string big_label = std::to_string(BIG) + " tasks";
+        auto r = measure(big_label.c_str(), BIG, [&] {
             done.store(0);
             for (int i = 0; i < BIG; i++) {
                 pool.submit([&] { done.fetch_add(1, std::memory_order_relaxed); });
             }
             while (done.load(std::memory_order_relaxed) < BIG)
                 std::this_thread::yield();
-        });
+        }, repeats);
         pool.shutdown();
         results.push_back(r);
         std::cout << "  " << r.name << ": " << r.throughput << " tasks/sec\n\n";

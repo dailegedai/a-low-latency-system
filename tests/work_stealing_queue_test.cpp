@@ -117,23 +117,30 @@ static bool test_steal_batch()
     return true;
 }
 
-// 多 deque × 多 thief：每次 push 都触发 grow（极小容量），无丢无重（和校验）
+// 多 deque × 多 thief：先确定性触发 grow，再让 owner 继续 push，
+// 同时由 thief 并发消费，校验容量增长和无丢无重。
 static bool test_multithread_grow_steal()
 {
     constexpr int OWNERS = 4;
     constexpr int THIEVES = 4;
     constexpr int PER = 5000;
+    constexpr int INITIAL_CAPACITY = 4;
+    constexpr int PREFILL = 8;
     constexpr long TOTAL = OWNERS * PER;
 
     std::vector<std::unique_ptr<QueueWorker<long>>> workers;
     for (int i = 0; i < OWNERS; ++i) {
-        workers.push_back(std::make_unique<QueueWorker<long>>(64)); // 适中容量 → 触发多次 grow 且频率现实
+        workers.push_back(
+            std::make_unique<QueueWorker<long>>(INITIAL_CAPACITY));
     }
 
     std::atomic<int> ready{0};
     std::atomic<bool> start{false};
+    std::atomic<int> prefilled{0};
+    std::atomic<bool> stealing_enabled{false};
     std::atomic<long> popped{0};
     std::atomic<long> sum{0};
+    auto seen = std::make_unique<std::atomic<int>[]>(TOTAL);
 
     std::vector<std::thread> threads;
 
@@ -143,9 +150,17 @@ static bool test_multithread_grow_steal()
             while (!start.load(std::memory_order_acquire)) {
                 std::this_thread::yield();
             }
-            for (int i = 0; i < PER; ++i) {
+            for (int i = 0; i < PREFILL; ++i) {
                 long v = static_cast<long>(t) * PER + i;
-                workers[t]->push(v); // grow 后恒成功，无需重试
+                workers[t]->push(v);
+            }
+            prefilled.fetch_add(1, std::memory_order_release);
+            while (!stealing_enabled.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            for (int i = PREFILL; i < PER; ++i) {
+                long v = static_cast<long>(t) * PER + i;
+                workers[t]->push(v);
             }
         });
     }
@@ -156,6 +171,9 @@ static bool test_multithread_grow_steal()
             while (!start.load(std::memory_order_acquire)) {
                 std::this_thread::yield();
             }
+            while (!stealing_enabled.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
             std::vector<QueueStealer<long>> stealers;
             for (int i = 0; i < OWNERS; ++i) {
                 stealers.push_back(workers[i]->make_stealer());
@@ -164,6 +182,9 @@ static bool test_multithread_grow_steal()
             while (popped.load(std::memory_order_relaxed) < TOTAL) {
                 for (size_t d = 0; d < stealers.size(); ++d) {
                     if (stealers[d].steal(v)) {
+                        CHECK(v >= 0 && v < TOTAL);
+                        seen[static_cast<size_t>(v)].fetch_add(
+                            1, std::memory_order_relaxed);
                         sum.fetch_add(v, std::memory_order_relaxed);
                         popped.fetch_add(1, std::memory_order_relaxed);
                         break;
@@ -179,12 +200,26 @@ static bool test_multithread_grow_steal()
     }));
     start.store(true, std::memory_order_release);
 
+    CHECK(testutil::waitUntil([&] {
+        return prefilled.load(std::memory_order_acquire) == OWNERS;
+    }));
+    for (auto& worker : workers) {
+        CHECK(worker->capacity() > INITIAL_CAPACITY);
+    }
+    stealing_enabled.store(true, std::memory_order_release);
+
     for (auto& th : threads) {
         th.join();
     }
 
     CHECK(popped.load() == TOTAL);
     CHECK(sum.load() == expected_sum(OWNERS, PER));
+    for (long i = 0; i < TOTAL; ++i) {
+        CHECK(seen[static_cast<size_t>(i)].load(std::memory_order_relaxed) == 1);
+    }
+    for (auto& worker : workers) {
+        CHECK(worker->capacity() > INITIAL_CAPACITY);
+    }
     return true;
 }
 
@@ -229,6 +264,7 @@ static bool test_multithread_steal()
     std::atomic<bool> start{false};
     std::atomic<long> popped{0};
     std::atomic<long> sum{0};
+    auto seen = std::make_unique<std::atomic<int>[]>(TOTAL);
 
     std::vector<std::thread> threads;
 
@@ -262,6 +298,9 @@ static bool test_multithread_steal()
             while (popped.load(std::memory_order_relaxed) < TOTAL) {
                 for (size_t d = 0; d < stealers.size(); ++d) {
                     if (stealers[d].steal(v)) {
+                        CHECK(v >= 0 && v < TOTAL);
+                        seen[static_cast<size_t>(v)].fetch_add(
+                            1, std::memory_order_relaxed);
                         sum.fetch_add(v, std::memory_order_relaxed);
                         popped.fetch_add(1, std::memory_order_relaxed);
                         break;
@@ -283,6 +322,9 @@ static bool test_multithread_steal()
 
     CHECK(popped.load() == TOTAL);
     CHECK(sum.load() == expected_sum(OWNERS, PER));
+    for (long i = 0; i < TOTAL; ++i) {
+        CHECK(seen[static_cast<size_t>(i)].load(std::memory_order_relaxed) == 1);
+    }
     return true;
 }
 
@@ -302,6 +344,7 @@ static bool test_mixed_pop_steal()
     std::atomic<bool> start{false};
     std::atomic<long> popped{0};
     std::atomic<long> sum{0};
+    auto seen = std::make_unique<std::atomic<int>[]>(TOTAL);
 
     std::vector<std::thread> threads;
 
@@ -321,6 +364,9 @@ static bool test_mixed_pop_steal()
             long x;
             for (int i = 0; i < PER / 2; ++i) {
                 if (workers[t]->pop(x)) {
+                    CHECK(x >= 0 && x < TOTAL);
+                    seen[static_cast<size_t>(x)].fetch_add(
+                        1, std::memory_order_relaxed);
                     sum.fetch_add(x, std::memory_order_relaxed);
                     popped.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -341,6 +387,9 @@ static bool test_mixed_pop_steal()
         while (popped.load(std::memory_order_relaxed) < TOTAL) {
             for (size_t d = 0; d < stealers.size(); ++d) {
                 if (stealers[d].steal(v)) {
+                    CHECK(v >= 0 && v < TOTAL);
+                    seen[static_cast<size_t>(v)].fetch_add(
+                        1, std::memory_order_relaxed);
                     sum.fetch_add(v, std::memory_order_relaxed);
                     popped.fetch_add(1, std::memory_order_relaxed);
                     break;
@@ -362,6 +411,9 @@ static bool test_mixed_pop_steal()
 
     CHECK(popped.load() == TOTAL);
     CHECK(sum.load() == expected_sum(OWNERS, PER));
+    for (long i = 0; i < TOTAL; ++i) {
+        CHECK(seen[static_cast<size_t>(i)].load(std::memory_order_relaxed) == 1);
+    }
     return true;
 }
 

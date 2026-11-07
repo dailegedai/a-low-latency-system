@@ -11,38 +11,75 @@
 static void test_throw()
 {
     std::cout << "[THROW] overflow throws exception\n";
-    ThreadPool pool(2, 4, RejectPolicy::THROW);
+    ThreadPool pool(1, 1, RejectPolicy::THROW);
+    testutil::Gate gate;
+    std::atomic<bool> started{false};
 
-    int submitted = 0;
+    pool.submit([&] {
+        started.store(true, std::memory_order_release);
+        gate.wait();
+    });
+    CHECK(testutil::waitUntil([&] {
+        return started.load(std::memory_order_acquire);
+    }));
+
+    pool.submit([] {});
+
+    bool threw = false;
     try {
-        for (int i = 0; i < 100; ++i) {
-            pool.submit([]() {
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            });
-            ++submitted;
-        }
+        pool.submit([] {});
     } catch (const std::exception& e) {
+        threw = true;
         std::cout << "  exception: " << e.what() << "\n";
     }
 
-    CHECK(submitted < 100);
-    std::cout << "  submitted before throw: " << submitted << " PASS\n";
+    CHECK(threw);
+
+    gate.release();
     pool.shutdown();
+    std::cout << "  third submit rejected PASS\n";
 }
 
 static void test_block()
 {
     std::cout << "[BLOCK] waits until space available\n";
-    ThreadPool pool(2, 4, RejectPolicy::BLOCK);
+    ThreadPool pool(1, 1, RejectPolicy::BLOCK);
+    testutil::Gate gate;
+    std::atomic<bool> started{false};
+    std::atomic<int> done{0};
 
-    constexpr int N = 200;
-    for (int i = 0; i < N; ++i) {
-        pool.submit([]() {});
-    }
+    pool.submit([&] {
+        started.store(true, std::memory_order_release);
+        gate.wait();
+        done.fetch_add(1, std::memory_order_relaxed);
+    });
+    CHECK(testutil::waitUntil([&] {
+        return started.load(std::memory_order_acquire);
+    }));
 
+    pool.submit([&done] { done.fetch_add(1, std::memory_order_relaxed); });
+
+    std::atomic<bool> attempted{false};
+    std::atomic<bool> returned{false};
+    std::thread producer([&] {
+        attempted.store(true, std::memory_order_release);
+        pool.submit([&done] { done.fetch_add(1, std::memory_order_relaxed); });
+        returned.store(true, std::memory_order_release);
+    });
+
+    CHECK(testutil::waitUntil([&] {
+        return attempted.load(std::memory_order_acquire);
+    }));
+    CHECK(!testutil::waitUntil([&] {
+        return returned.load(std::memory_order_acquire);
+    }, std::chrono::milliseconds(50)));
+
+    gate.release();
+    producer.join();
     pool.shutdown();
-    CHECK(pool.getCompletedTaskCount() == N);
-    std::cout << "  all " << N << " tasks executed PASS\n";
+    CHECK(done.load() == 3);
+    CHECK(pool.getCompletedTaskCount() == 3);
+    std::cout << "  producer blocked, then all 3 tasks executed PASS\n";
 }
 
 // 回归：队列满时多个生产者阻塞在 not_full_cv，shutdown 必须唤醒它们，

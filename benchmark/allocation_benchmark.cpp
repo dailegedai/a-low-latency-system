@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <new>
 
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
@@ -84,11 +85,18 @@ static void reset_counters()
 }
 
 template <typename Fn>
-static void measure(const char *label, int n, Fn &&fn)
+static void measure(
+    const char *label,
+    int n,
+    Fn &&fn,
+    std::function<void()> quiesce = {})
 {
     reset_counters();
     for (int i = 0; i < n; ++i) {
         fn(i);
+    }
+    if (quiesce) {
+        quiesce();
     }
     const long long allocs = g_new_calls.load(std::memory_order_relaxed);
     const long long frees = g_delete_calls.load(std::memory_order_relaxed);
@@ -125,13 +133,15 @@ int main()
     // WorkStealingThreadPool：验证同一 Task 构造路径（1 worker 会 drain）。
     {
         WorkStealingThreadPool pool(1, 2, WorkStealingRejectPolicy::DISCARD);
-        measure("WST submit(future) [empty]", N,
-                [&](int) { pool.submit([] {}); });
+        measure("WST submit(future) [empty, incl worker]", N,
+                [&](int) { pool.submit([] {}); },
+                [&] { pool.shutdown(); });
     }
     {
         WorkStealingThreadPool pool(1, 2, WorkStealingRejectPolicy::DISCARD);
-        measure("WST submitVoid  [empty]", N,
-                [&](int) { pool.submitVoid([] {}); });
+        measure("WST submitVoid  [empty, incl worker]", N,
+                [&](int) { pool.submitVoid([] {}); },
+                [&] { pool.shutdown(); });
     }
 
     std::printf("\n注：ThreadPool 场景 0 worker + DISCARD 隔离纯提交路径；\n");

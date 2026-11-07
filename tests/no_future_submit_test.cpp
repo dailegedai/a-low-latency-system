@@ -121,6 +121,27 @@ static void ws_try_submit()
     std::cout << "  PASS\n";
 }
 
+static void ws_try_submit_full()
+{
+    std::cout << "[WST] trySubmit full -> false\n";
+    WorkStealingThreadPool pool(1, 1);
+    testutil::Gate gate;
+    std::atomic<bool> started{false};
+    CHECK(pool.trySubmit([&] {
+        started.store(true, std::memory_order_release);
+        gate.wait();
+    }));
+    CHECK(testutil::waitUntil([&] {
+        return started.load(std::memory_order_acquire);
+    }));
+    CHECK(pool.trySubmit([] {}));
+    CHECK(pool.trySubmit([] {}));
+    CHECK(!pool.trySubmit([] {}));
+    gate.release();
+    pool.shutdown();
+    std::cout << "  PASS\n";
+}
+
 int main()
 {
     std::cout << "========== No-Future Submit Test ==========\n\n";
@@ -131,6 +152,7 @@ int main()
     ws_submit_void();
     ws_failed_count();
     ws_try_submit();
+    ws_try_submit_full();
     std::cout << "\n========== ALL TESTS PASSED ==========\n";
     return 0;
 }

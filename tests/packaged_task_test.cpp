@@ -1,3 +1,5 @@
+#include "check.h"
+
 #include <iostream>
 #include <future>
 
@@ -8,5 +10,9 @@ int main() {
 
     auto fut = task.get_future();
     task();
-    std::cout << fut.get() << std::endl;
+    const int value = fut.get();
+    CHECK(value == 42);
+
+    std::cout << "packaged_task value PASS\n";
+    return 0;
 }

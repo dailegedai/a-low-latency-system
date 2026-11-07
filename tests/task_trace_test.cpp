@@ -209,6 +209,40 @@ static void test_default_disabled()
     std::cout << "  PASS\n";
 }
 
+static void test_sink_exception_isolated()
+{
+    std::cout << "[sink] throwing sink does not terminate workers\n";
+    {
+        ThreadPool pool(2, 32);
+        std::atomic<int> calls{0};
+        pool.setTraceSink([&](const TaskTrace&) {
+            calls.fetch_add(1, std::memory_order_relaxed);
+            throw std::runtime_error("sink failure");
+        });
+        for (int i = 0; i < 100; ++i) {
+            pool.submitVoid([] {});
+        }
+        pool.shutdown();
+        CHECK(calls.load() == 100);
+        CHECK(pool.getCompletedTaskCount() == 100);
+    }
+    {
+        WorkStealingThreadPool pool(2, 32);
+        std::atomic<int> calls{0};
+        pool.setTraceSink([&](const TaskTrace&) {
+            calls.fetch_add(1, std::memory_order_relaxed);
+            throw std::runtime_error("sink failure");
+        });
+        for (int i = 0; i < 100; ++i) {
+            pool.submitVoid([] {});
+        }
+        pool.shutdown();
+        CHECK(calls.load() == 100);
+        CHECK(pool.getCompletedTaskCount() == 100);
+    }
+    std::cout << "  PASS\n";
+}
+
 int main()
 {
     std::cout << "========== TaskTrace Test ==========\n\n";
@@ -220,6 +254,7 @@ int main()
     test_tp_try_submit_traced();
     test_wst_traced();
     test_default_disabled();
+    test_sink_exception_isolated();
     std::cout << "\n========== ALL TESTS PASSED ==========\n";
     return 0;
 }
